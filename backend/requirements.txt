@@ -5,5 +5,4 @@ pyjwt
 passlib[bcrypt]
 python-multipart
 email-validator
-mediapipe
 opencv-python 
