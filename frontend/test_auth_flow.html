@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Flow Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        button { margin: 5px; padding: 10px 15px; }
+        input { margin: 5px; padding: 5px; width: 200px; }
+        .result { margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>Authentication Flow Test</h1>
+    
+    <div class="test-section">
+        <h3>1. Register New User</h3>
+        <input type="text" id="reg-name" placeholder="Full Name" value="Test User">
+        <input type="text" id="reg-username" placeholder="Username" value="testuser123">
+        <input type="email" id="reg-email" placeholder="Email" value="test@example.com">
+        <input type="password" id="reg-password" placeholder="Password" value="password123">
+        <button onclick="registerUser()">Register</button>
+        <div id="register-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. Login User</h3>
+        <input type="text" id="login-username" placeholder="Username" value="testuser123">
+        <input type="password" id="login-password" placeholder="Password" value="password123">
+        <button onclick="loginUser()">Login</button>
+        <div id="login-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>3. Get User Data</h3>
+        <button onclick="getUserData()">Get User Data</button>
+        <div id="user-data-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>4. Check Local Storage</h3>
+        <button onclick="checkLocalStorage()">Check Local Storage</button>
+        <div id="localstorage-result" class="result"></div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+
+        async function registerUser() {
+            const resultDiv = document.getElementById('register-result');
+            resultDiv.innerHTML = 'Registering...';
+            
+            const userData = {
+                name: document.getElementById('reg-name').value,
+                username: document.getElementById('reg-username').value,
+                email: document.getElementById('reg-email').value,
+                password: document.getElementById('reg-password').value
+            };
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(userData)
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `<div class="success">✅ Registration successful: ${data.msg}</div>`;
+                } else {
+                    resultDiv.innerHTML = `<div class="error">❌ Registration failed: ${data.detail}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        async function loginUser() {
+            const resultDiv = document.getElementById('login-result');
+            resultDiv.innerHTML = 'Logging in...';
+            
+            const formData = new FormData();
+            formData.append('username', document.getElementById('login-username').value);
+            formData.append('password', document.getElementById('login-password').value);
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Store token
+                    localStorage.setItem('authToken', data.access_token);
+                    resultDiv.innerHTML = `<div class="success">✅ Login successful! Token stored.</div>`;
+                } else {
+                    resultDiv.innerHTML = `<div class="error">❌ Login failed: ${data.detail}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        async function getUserData() {
+            const resultDiv = document.getElementById('user-data-result');
+            resultDiv.innerHTML = 'Fetching user data...';
+            
+            const token = localStorage.getItem('authToken');
+            if (!token) {
+                resultDiv.innerHTML = '<div class="error">❌ No auth token found. Please login first.</div>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/auth/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Store user data
+                    localStorage.setItem('currentUser', JSON.stringify(data));
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            ✅ User data retrieved successfully!<br>
+                            Name: ${data.name}<br>
+                            Username: ${data.username}<br>
+                            Email: ${data.email}
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `<div class="error">❌ Failed to get user data: ${data.detail}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        function checkLocalStorage() {
+            const resultDiv = document.getElementById('localstorage-result');
+            const token = localStorage.getItem('authToken');
+            const user = localStorage.getItem('currentUser');
+            
+            let html = '<h4>Local Storage Contents:</h4>';
+            html += `<p><strong>Auth Token:</strong> ${token ? '✅ Present' : '❌ Missing'}</p>`;
+            html += `<p><strong>User Data:</strong> ${user ? '✅ Present' : '❌ Missing'}</p>`;
+            
+            if (user) {
+                try {
+                    const userData = JSON.parse(user);
+                    html += `<p><strong>User Name:</strong> ${userData.name || '❌ Missing'}</p>`;
+                    html += `<p><strong>Username:</strong> ${userData.username || '❌ Missing'}</p>`;
+                } catch (e) {
+                    html += '<p>❌ Error parsing user data</p>';
+                }
+            }
+            
+            resultDiv.innerHTML = html;
+        }
+    </script>
+</body>
+</html> 

@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* FLEX-IT-OUT Student Fitness Design System */
+
+@layer base {
+  :root {
+    /* Core backgrounds - Clean light theme */
+    --background: 0 0% 100%;
+    --foreground: 220 15% 20%;
+    
+    /* Card backgrounds */
+    --card: 0 0% 98%;
+    --card-foreground: 220 10% 25%;
+    
+    /* Popover and modals */
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 15% 20%;
+    
+    /* Primary - Professional blue */
+    --primary: 220 70% 50%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Secondary - Clean gray */
+    --secondary: 210 20% 95%;
+    --secondary-foreground: 220 15% 25%;
+    
+    /* Muted elements */
+    --muted: 210 20% 92%;
+    --muted-foreground: 220 10% 45%;
+    
+    /* Accent - Success green */
+    --accent: 140 60% 50%;
+    --accent-foreground: 0 0% 100%;
+    
+    /* Success - Green for achievements */
+    --success: 140 60% 50%;
+    --success-foreground: 0 0% 100%;
+    
+    /* Warning/Energy - Orange for notifications */
+    --energy: 25 85% 55%;
+    --energy-foreground: 0 0% 100%;
+    
+    /* Destructive actions */
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    
+    /* Borders and inputs */
+    --border: 220 15% 85%;
+    --input: 0 0% 98%;
+    --ring: 220 70% 50%;
+
+    --radius: 0.5rem;
+    
+    /* Clean gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(220 80% 60%));
+    --gradient-secondary: linear-gradient(135deg, hsl(var(--secondary)), hsl(210 25% 90%));
+    --gradient-accent: linear-gradient(135deg, hsl(var(--accent)), hsl(140 70% 60%));
+    --gradient-subtle: linear-gradient(180deg, hsl(var(--background)), hsl(210 20% 98%));
+    --gradient-card: linear-gradient(145deg, hsl(var(--card)), hsl(210 15% 96%));
+    
+    /* Subtle shadows instead of glows */
+    --shadow-soft: 0 2px 8px hsl(220 15% 20% / 0.08);
+    --shadow-medium: 0 4px 16px hsl(220 15% 20% / 0.12);
+    --shadow-strong: 0 8px 24px hsl(220 15% 20% / 0.16);
+    
+    /* Animation durations - reduced for less flashy feel */
+    --transition-smooth: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
