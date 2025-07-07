@@ -11,7 +11,7 @@ app = FastAPI(title="FLEX-IT-OUT API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://flexflowfusion.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
