@@ -6,7 +6,7 @@ import "@tensorflow/tfjs-backend-webgl";
 const videoWidth = 640;
 const videoHeight = 480;
 
-// Simple interface for keypoints
+// Keypoint interface
 interface Keypoint {
   x: number;
   y: number;
@@ -14,9 +14,9 @@ interface Keypoint {
   name?: string;
 }
 
-// Simple state for squat detection only
-interface SquatState {
-  inSquatPosition: boolean;
+// Shared exercise state
+interface ExerciseState {
+  inPosition: boolean;
   lastRepTime: number;
   consecutiveFrames: number;
 }
@@ -27,7 +27,7 @@ interface PoseDetectorProps {
   onRepDetected: (keypoints: Keypoint[], repCount: number) => void;
 }
 
-// Calculate angle between three points
+// Calculate angle between 3 points
 function getAngle(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) {
   const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
   let angle = Math.abs(radians * 180.0 / Math.PI);
@@ -40,22 +40,21 @@ const PoseDetector: React.FC<PoseDetectorProps> = ({ isDetecting, exercise, onRe
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [repCount, setRepCount] = useState(0);
 
-  // Simple squat state
-  const squatState = useRef<SquatState>({
-    inSquatPosition: false,
+  const exerciseState = useRef<ExerciseState>({
+    inPosition: false,
     lastRepTime: 0,
     consecutiveFrames: 0,
   });
 
   // Reset state when exercise changes or detection stops
   useEffect(() => {
-    squatState.current = {
-      inSquatPosition: false,
+    exerciseState.current = {
+      inPosition: false,
       lastRepTime: 0,
       consecutiveFrames: 0,
     };
     setRepCount(0);
-    console.log("Squat state reset");
+    console.log("Exercise state reset");
   }, [exercise, isDetecting]);
 
   useEffect(() => {
@@ -71,7 +70,7 @@ const PoseDetector: React.FC<PoseDetectorProps> = ({ isDetecting, exercise, onRe
         console.log("Pose detector loaded");
         detectLoop();
       } catch (error) {
-        console.error('Failed to create pose detector:', error);
+        console.error("Failed to create pose detector:", error);
       }
     };
 
@@ -90,23 +89,27 @@ const PoseDetector: React.FC<PoseDetectorProps> = ({ isDetecting, exercise, onRe
       try {
         const poses = await detector.estimatePoses(video);
         const ctx = canvasRef.current?.getContext("2d");
-        
+
         if (ctx && poses[0]?.keypoints) {
           ctx.clearRect(0, 0, videoWidth, videoHeight);
           drawKeypoints(poses[0].keypoints, ctx);
-          
+
           const keypoints = poses[0].keypoints;
           const currentTime = Date.now();
-          
-          // ONLY detect squat - ignore other exercises
-          if (exercise.toLowerCase().includes('squat')) {
+
+          // Normalize exercise name
+          const normalizedExercise = exercise.toLowerCase().replace(/[-_ ]/g, "");
+
+          if (normalizedExercise.includes("squat")) {
             detectSquat(keypoints, currentTime);
+          } else if (normalizedExercise.includes("pushup")) {
+            detectPushup(keypoints, currentTime);
           }
         }
       } catch (error) {
-        console.error('Detection error:', error);
+        console.error("Detection error:", error);
       }
-      
+
       rafId = requestAnimationFrame(detectLoop);
     };
 
@@ -118,71 +121,90 @@ const PoseDetector: React.FC<PoseDetectorProps> = ({ isDetecting, exercise, onRe
     };
   }, [isDetecting, exercise]);
 
-  // SIMPLE SQUAT DETECTION ONLY
+  // Squat detection logic
   const detectSquat = (keypoints: Keypoint[], currentTime: number) => {
-    // Find the keypoints we need for squat detection
-    const leftHip = keypoints.find(k => k.name === 'left_hip');
-    const leftKnee = keypoints.find(k => k.name === 'left_knee');
-    const leftAnkle = keypoints.find(k => k.name === 'left_ankle');
-    
-    // Check if we have all required keypoints with good confidence
-    if (!leftHip || !leftKnee || !leftAnkle || 
-        (leftHip.score || 0) < 0.3 || 
-        (leftKnee.score || 0) < 0.3 || 
-        (leftAnkle.score || 0) < 0.3) {
-      return;
-    }
+    const leftHip = keypoints.find(k => k.name === "left_hip");
+    const leftKnee = keypoints.find(k => k.name === "left_knee");
+    const leftAnkle = keypoints.find(k => k.name === "left_ankle");
 
-    // Calculate knee angle
+    if (!leftHip || !leftKnee || !leftAnkle ||
+      (leftHip.score || 0) < 0.3 ||
+      (leftKnee.score || 0) < 0.3 ||
+      (leftAnkle.score || 0) < 0.3) return;
+
     const kneeAngle = getAngle(leftHip, leftKnee, leftAnkle);
-    
-    console.log(`Squat angle: ${kneeAngle.toFixed(1)}, In position: ${squatState.current.inSquatPosition}`);
-    
-    // Simple squat logic:
-    // - If knee angle < 100 degrees, we're in squat position
-    // - If knee angle > 150 degrees, we're standing
-    // - Need to go from standing -> squat -> standing to count a rep
-    
-    if (kneeAngle < 100 && !squatState.current.inSquatPosition) {
-      // Entered squat position
-      squatState.current.inSquatPosition = true;
-      squatState.current.consecutiveFrames = 0;
-      console.log("Squat: Entered down position");
-    } else if (kneeAngle > 150 && squatState.current.inSquatPosition) {
-      // Came back up from squat
-      squatState.current.consecutiveFrames++;
-      
-      // Need to stay up for a few frames to confirm the rep
-      if (squatState.current.consecutiveFrames >= 3) {
-        // Check cooldown to prevent multiple reps
-        if (currentTime - squatState.current.lastRepTime > 1000) { // 1 second cooldown
-          console.log("Squat: Rep completed!");
+    console.log(`Squat angle: ${kneeAngle.toFixed(1)}`);
+
+    if (kneeAngle < 100 && !exerciseState.current.inPosition) {
+      exerciseState.current.inPosition = true;
+      exerciseState.current.consecutiveFrames = 0;
+      console.log("Squat: Down position entered");
+    } else if (kneeAngle > 150 && exerciseState.current.inPosition) {
+      exerciseState.current.consecutiveFrames++;
+      if (exerciseState.current.consecutiveFrames >= 3) {
+        if (currentTime - exerciseState.current.lastRepTime > 1000) {
           completeRep(keypoints, currentTime);
-          squatState.current.lastRepTime = currentTime;
+          console.log("Squat: Rep completed");
         }
-        squatState.current.inSquatPosition = false;
-        squatState.current.consecutiveFrames = 0;
+        exerciseState.current.inPosition = false;
+        exerciseState.current.consecutiveFrames = 0;
       }
     } else if (kneeAngle > 150) {
-      // Reset consecutive frames if we're standing
-      squatState.current.consecutiveFrames = 0;
+      exerciseState.current.consecutiveFrames = 0;
     }
   };
 
-  // Simple rep completion
+  // Push-up detection logic
+  const detectPushup = (keypoints: Keypoint[], currentTime: number) => {
+    const leftShoulder = keypoints.find(k => k.name === 'left_shoulder');
+    const leftElbow = keypoints.find(k => k.name === 'left_elbow');
+    const leftWrist = keypoints.find(k => k.name === 'left_wrist');
+  
+    if (
+      !leftShoulder || !leftElbow || !leftWrist ||
+      (leftShoulder.score ?? 0) < 0.3 ||
+      (leftElbow.score ?? 0) < 0.3 ||
+      (leftWrist.score ?? 0) < 0.3
+    ) return;
+  
+    const elbowAngle = getAngle(leftShoulder, leftElbow, leftWrist);
+  
+    console.log(`Push-up angle: ${elbowAngle.toFixed(1)}, inPosition: ${exerciseState.current.inPosition}, frames: ${exerciseState.current.consecutiveFrames}`);
+  
+    if (elbowAngle < 90 && !exerciseState.current.inPosition) {
+      exerciseState.current.inPosition = true;
+      exerciseState.current.consecutiveFrames = 0;
+      console.log("Push-up: Down position entered");
+    } else if (elbowAngle > 150 && exerciseState.current.inPosition) {
+      exerciseState.current.consecutiveFrames++;
+      if (exerciseState.current.consecutiveFrames >= 2) {
+        if (currentTime - exerciseState.current.lastRepTime > 800) {
+          completeRep(keypoints, currentTime);
+          console.log("Push-up: Rep completed!");
+          exerciseState.current.lastRepTime = currentTime;
+        }
+        exerciseState.current.inPosition = false;
+        exerciseState.current.consecutiveFrames = 0;
+      }
+    } else if (elbowAngle > 150) {
+      exerciseState.current.consecutiveFrames = 0;
+    }
+  };
+  
+
+  // Rep completion logic
   const completeRep = (keypoints: Keypoint[], currentTime: number) => {
     setRepCount(r => {
       const newCount = r + 1;
       onRepDetected(keypoints, newCount);
-      console.log(`Squat rep ${newCount} completed!`);
       return newCount;
     });
+    exerciseState.current.lastRepTime = currentTime;
   };
 
   // Draw keypoints on canvas
-  function drawKeypoints(keypoints: Keypoint[], ctx: CanvasRenderingContext2D) {
-    if (!ctx) return;
-    keypoints.forEach((keypoint) => {
+  const drawKeypoints = (keypoints: Keypoint[], ctx: CanvasRenderingContext2D) => {
+    keypoints.forEach(keypoint => {
       if (keypoint && keypoint.x != null && keypoint.y != null && (keypoint.score ?? 0) > 0.3) {
         ctx.beginPath();
         ctx.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI);
@@ -190,7 +212,7 @@ const PoseDetector: React.FC<PoseDetectorProps> = ({ isDetecting, exercise, onRe
         ctx.fill();
       }
     });
-  }
+  };
 
   return (
     <div style={{ position: "relative", width: videoWidth, height: videoHeight }}>
@@ -211,4 +233,4 @@ const PoseDetector: React.FC<PoseDetectorProps> = ({ isDetecting, exercise, onRe
   );
 };
 
-export default PoseDetector; 
+export default PoseDetector;

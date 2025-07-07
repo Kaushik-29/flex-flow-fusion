@@ -45,8 +45,12 @@ async def calculate_points(
     points_collection = db["user_points"]
     
     exercise_lower = exercise.lower()
+    # Try direct match, then try stripping trailing 's' for plural
     if exercise_lower not in EXERCISE_CONFIGS:
-        raise HTTPException(status_code=400, detail=f"Exercise '{exercise}' not supported")
+        if exercise_lower.endswith('s') and exercise_lower[:-1] in EXERCISE_CONFIGS:
+            exercise_lower = exercise_lower[:-1]
+        else:
+            raise HTTPException(status_code=400, detail=f"Exercise '{exercise}' not supported")
     
     config = EXERCISE_CONFIGS[exercise_lower]
     reps_per_cycle = config["reps_per_cycle"]
