@@ -276,6 +276,45 @@ export const WorkoutInterface = ({ user }: { user?: any }) => {
     }
   };
 
+  // Add handleFinish function
+  const handleFinish = async () => {
+    if (repCount < exerciseConfig.reps_per_cycle) {
+      toast({
+        title: "Not enough reps!",
+        description: `Complete at least 1 cycle (${exerciseConfig.reps_per_cycle} reps) to earn points.`,
+        variant: "destructive"
+      });
+      return;
+    }
+    setLoading(true);
+    try {
+      const pointsResult = await pointsAPI.calculatePoints(currentExercise.toLowerCase(), repCount);
+      if (pointsResult.points_earned > 0) {
+        toast({
+          title: "🎉 Workout Finished!",
+          description: `Earned ${pointsResult.points_earned} points! (${pointsResult.cycles_completed} cycles)`
+        });
+      } else {
+        toast({
+          title: "Workout Finished!",
+          description: `Completed ${repCount} reps. Complete a full cycle to earn points!`
+        });
+      }
+      // Notify other components to refresh points
+      window.dispatchEvent(new Event('pointsUpdated'));
+    } catch (err) {
+      console.error('Error finishing workout:', err);
+      toast({
+        title: "Error",
+        description: "Failed to update points",
+        variant: "destructive"
+      });
+    }
+    setLoading(false);
+    setIsDetecting(false);
+    setFeedback("Workout finished");
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="text-center space-y-2">
@@ -516,6 +555,15 @@ export const WorkoutInterface = ({ user }: { user?: any }) => {
           disabled={loading}
         >
           Reset
+        </Button>
+        {/* Finish Button */}
+        <Button
+          variant="success"
+          size="lg"
+          onClick={handleFinish}
+          disabled={loading || repCount < exerciseConfig.reps_per_cycle}
+        >
+          Finish
         </Button>
         <Button
           variant="ghost"

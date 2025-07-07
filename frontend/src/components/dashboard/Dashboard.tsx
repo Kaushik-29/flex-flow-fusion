@@ -30,6 +30,13 @@ export const Dashboard = ({ onViewChange, user }: DashboardProps) => {
     };
     
     fetchUserPoints();
+    
+    // Listen for pointsUpdated event to refresh user points
+    const handlePointsUpdated = () => {
+      fetchUserPoints();
+    };
+    window.addEventListener('pointsUpdated', handlePointsUpdated);
+    return () => window.removeEventListener('pointsUpdated', handlePointsUpdated);
   }, []);
 
   const motivationalQuotes = [
@@ -58,7 +65,7 @@ export const Dashboard = ({ onViewChange, user }: DashboardProps) => {
       </div>
 
       {/* User Profile */}
-      {user && <UserProfile user={user} />}
+      {user && <UserProfile user={{ ...user, totalPoints: userPoints }} />}
 
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

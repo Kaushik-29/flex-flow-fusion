@@ -189,6 +189,17 @@ export const Leaderboard = () => {
     fetchFriendsPoints();
   }, [selectedPeriod]);
 
+  // Listen for pointsUpdated event to refresh data
+  useEffect(() => {
+    const handlePointsUpdated = () => {
+      fetchLeaderboard(selectedPeriod);
+      fetchPointsLeaderboard();
+      fetchFriendsPoints();
+    };
+    window.addEventListener('pointsUpdated', handlePointsUpdated);
+    return () => window.removeEventListener('pointsUpdated', handlePointsUpdated);
+  }, [selectedPeriod]);
+
   const getRankColor = (rank: number) => {
     if (rank === 1) return "text-yellow-400";
     if (rank === 2) return "text-gray-300";
