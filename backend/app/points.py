@@ -125,6 +125,10 @@ async def get_user_points(current_user = Depends(get_current_user)):
             "last_updated": datetime.utcnow()
         }
     
+    # Remove MongoDB _id field to avoid serialization issues
+    if "_id" in user_points:
+        user_points["_id"] = str(user_points["_id"])
+        del user_points["_id"]
     return user_points
 
 @router.get("/leaderboard")
@@ -139,7 +143,7 @@ async def get_points_leaderboard(limit: int = 50):
     
     leaderboard = []
     for i, user_points in enumerate(top_users):
-        user = users_collection.find_one({"_id": ObjectId(user_points["user_id"])})
+        user = users_collection.find_one({"username": user_points["user_id"]})
         if user:
             leaderboard.append({
                 "rank": i + 1,
