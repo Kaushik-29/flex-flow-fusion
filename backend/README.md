@@ -37,9 +37,9 @@ backend/
    pip install -r requirements.txt
    ```
 
-2. **Set up MongoDB:**
-   - Install MongoDB locally or use MongoDB Atlas
-   - Set `MONGO_URI` environment variable (default: `mongodb://localhost:27017/`)
+2. **Set up Supabase Postgres:**
+   - Create a Supabase project and use the Postgres connection string
+   - Set `DATABASE_URL` environment variable to the Supabase connection string
 
 3. **Run the server:**
    ```bash
@@ -103,7 +103,8 @@ The frontend can now connect to this backend using the API service in `frontend/
 
 ## Environment Variables
 
-- `MONGO_URI` - MongoDB connection string
+- `DATABASE_URL` - Supabase Postgres connection string
+- `SUPABASE_DATABASE_URL` - Optional alternate name for the same connection string
 - `JWT_SECRET` - Secret key for JWT tokens (change in production)
 
 ## Testing

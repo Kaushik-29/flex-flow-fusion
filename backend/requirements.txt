@@ -8,3 +8,5 @@ email-validator
 opencv-python
 python-dotenv
 dnspython
+sqlalchemy
+psycopg2-binary

@@ -5,7 +5,7 @@
 1. **GitHub Account** - To host your code
 2. **Vercel Account** - For frontend deployment (free)
 3. **Railway Account** - For backend deployment (free tier available)
-4. **MongoDB Atlas Account** - For database (free tier available)
+4. **Supabase Account** - For database (free tier available)
 
 ---
 
@@ -33,7 +33,7 @@
 6. **Select the `backend` folder**
 7. **Add Environment Variables:**
    ```
-   MONGO_URI=your_mongodb_atlas_connection_string
+   DATABASE_URL=your_supabase_postgres_connection_string
    JWT_SECRET=your_secret_key_here
    ```
 8. **Click "Deploy"**
@@ -56,13 +56,12 @@
    ```
 7. **Click "Deploy"**
 
-### **Step 4: Set Up MongoDB Atlas**
+### **Step 4: Set Up Supabase Postgres**
 
-1. **Go to [MongoDB Atlas](https://cloud.mongodb.com)**
-2. **Create free cluster**
-3. **Create database user**
-4. **Get connection string**
-5. **Add to Railway environment variables**
+1. **Go to [Supabase](https://supabase.com)**
+2. **Create a new project**
+3. **Open the database settings and copy the Postgres connection string**
+4. **Add it to your Render or Railway environment variables as `DATABASE_URL`**
 
 ---
 
@@ -73,11 +72,11 @@
 - `vite.config.ts` - Vite configuration
 - Environment variable: `VITE_API_URL`
 
-### **Backend (Railway)**
+### **Backend (Railway or Render)**
 - `railway.json` - Railway configuration
 - `Procfile` - Process definition
 - `runtime.txt` - Python version
-- Environment variables: `MONGO_URI`, `JWT_SECRET`
+- Environment variables: `DATABASE_URL`, `JWT_SECRET`
 
 ---
 
@@ -105,7 +104,7 @@ After deployment, you'll have:
    - Ensure all dependencies are in `package.json`/`requirements.txt`
 
 4. **Database Connection:**
-   - Verify MongoDB Atlas connection string
+   - Verify Supabase Postgres connection string
    - Check network access settings
 
 ---
@@ -124,7 +123,7 @@ After deployment, you'll have:
 
 - **Vercel:** Free tier (unlimited deployments)
 - **Railway:** Free tier (limited usage)
-- **MongoDB Atlas:** Free tier (512MB storage)
+- **Supabase:** Free tier available for Postgres hosting
 - **Total Cost:** $0/month
 
 ---
