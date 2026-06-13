@@ -192,8 +192,6 @@ async def pose_feedback_json(request: Request):
         feedback=feedback,
         keypoints=keypoints
     )
-
     db = get_database()
     db["sessions"].insert_one(session.dict())
-
     return {"feedback": feedback}
