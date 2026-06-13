@@ -1,10 +1,18 @@
 fastapi
 uvicorn
+<<<<<<< HEAD
 pymongo[srv]
+=======
+pymongo
+>>>>>>> 73104143b6642647d1cbb806129d6444f6ec9d2f
 pyjwt
 passlib[bcrypt]
 python-multipart
 email-validator
+<<<<<<< HEAD
 opencv-python
 python-dotenv
 dnspython
+=======
+opencv-python 
+>>>>>>> 73104143b6642647d1cbb806129d6444f6ec9d2f

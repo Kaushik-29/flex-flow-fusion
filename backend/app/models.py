@@ -1,6 +1,10 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
+<<<<<<< HEAD
+=======
+from pymongo import MongoClient
+>>>>>>> 73104143b6642647d1cbb806129d6444f6ec9d2f
 
 class Keypoint(BaseModel):
     x: float
@@ -49,4 +53,13 @@ class Session(BaseModel):
     user_id: str
     timestamp: datetime
     feedback: str
+<<<<<<< HEAD
     keypoints: list
+=======
+    keypoints: list
+
+def get_db():
+    client = MongoClient("mongodb://localhost:27017/")
+    db = client["pose_app"]
+    return db 
+>>>>>>> 73104143b6642647d1cbb806129d6444f6ec9d2f

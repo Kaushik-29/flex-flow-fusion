@@ -1,5 +1,6 @@
 import os
 from pymongo import MongoClient
+<<<<<<< HEAD
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 # Load .env file for local development
@@ -25,6 +26,11 @@ except (ConnectionFailure, ServerSelectionTimeoutError) as e:
     print(f"[ERROR] MongoDB Atlas connection FAILED: {e}")
     raise
 
+=======
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+client = MongoClient(MONGO_URI)
+>>>>>>> 73104143b6642647d1cbb806129d6444f6ec9d2f
 db = client["flexitout"]
 
 def get_database():
@@ -37,4 +43,8 @@ def get_workout_collection():
     return db["workouts"]
 
 def get_scores_collection():
+<<<<<<< HEAD
     return db["user_scores"]
+=======
+    return db["user_scores"] 
+>>>>>>> 73104143b6642647d1cbb806129d6444f6ec9d2f
