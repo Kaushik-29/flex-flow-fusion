@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from app.models import UserCreate, UserLogin, User, UserInDB
 from app.db import get_user_collection, get_database
 from app.utils import hash_password, verify_password, create_access_token, decode_access_token
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from bson.objectid import ObjectId
 from typing import Optional
 from pydantic import BaseModel
@@ -20,51 +20,67 @@ class FriendRequestResponse(BaseModel):
     request_id: str
     action: str  # "accept" or "reject"
 
+
+def _database_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Database unavailable. Check MONGO_URI and MongoDB Atlas credentials.",
+    )
+
 @router.post("/register", status_code=201)
 def register(user: UserCreate):
-    users = get_user_collection()
-    if users.find_one({"username": user.username}):
-        raise HTTPException(status_code=400, detail="Username already exists")
-    if users.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="Email already exists")
-    hashed = hash_password(user.password)
-    user_dict = {
-        "name": user.name,
-        "username": user.username,
-        "email": user.email,
-        "hashed_password": hashed,
-        "created_at": datetime.utcnow()
-    }
-    users.insert_one(user_dict)
-    return {"msg": "User registered successfully"}
+    try:
+        users = get_user_collection()
+        if users.find_one({"username": user.username}):
+            raise HTTPException(status_code=400, detail="Username already exists")
+        if users.find_one({"email": user.email}):
+            raise HTTPException(status_code=400, detail="Email already exists")
+        hashed = hash_password(user.password)
+        user_dict = {
+            "name": user.name,
+            "username": user.username,
+            "email": user.email,
+            "hashed_password": hashed,
+            "created_at": datetime.utcnow()
+        }
+        users.insert_one(user_dict)
+        return {"msg": "User registered successfully"}
+    except PyMongoError:
+        raise _database_unavailable()
 
 @router.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    users = get_user_collection()
-    user = users.find_one({"username": form_data.username})
-    if not user or not verify_password(form_data.password, user["hashed_password"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token({"sub": str(user["_id"])})
-    return {"access_token": token, "token_type": "bearer"}
+    try:
+        users = get_user_collection()
+        user = users.find_one({"username": form_data.username})
+        if not user or not verify_password(form_data.password, user["hashed_password"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        token = create_access_token({"sub": str(user["_id"])})
+        return {"access_token": token, "token_type": "bearer"}
+    except PyMongoError:
+        raise _database_unavailable()
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user_id = payload.get("sub")
-    users = get_user_collection()
-    user = users.find_one({"_id": ObjectId(user_id)})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Return a simple dict instead of UserInDB model to avoid conversion issues
-    return {
-        "id": str(user["_id"]),
-        "name": user.get("name"),
-        "username": user.get("username"),
-        "email": user.get("email"),
-        "hashed_password": user.get("hashed_password")
-    }
+    try:
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        user_id = payload.get("sub")
+        users = get_user_collection()
+        user = users.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Return a simple dict instead of UserInDB model to avoid conversion issues
+        return {
+            "id": str(user["_id"]),
+            "name": user.get("name"),
+            "username": user.get("username"),
+            "email": user.get("email"),
+            "hashed_password": user.get("hashed_password")
+        }
+    except PyMongoError:
+        raise _database_unavailable()
 
 @router.get("/me")
 def get_me(user=Depends(get_current_user)):
