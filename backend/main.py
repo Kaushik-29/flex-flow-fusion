@@ -11,18 +11,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-<<<<<<< HEAD
-    allow_origins=[
-        "http://localhost:8080",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
-=======
-    allow_origins=["*"],
->>>>>>> 73104143b6642647d1cbb806129d6444f6ec9d2f
+    allow_origins=["*"],  # Change this to specific domains later if needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,4 +26,6 @@ app.include_router(points_router, prefix="/points", tags=["points"])
 
 @app.get("/")
 def root():
-    return {"message": "FLEX-IT-OUT FastAPI backend is running!"} 
+    return {
+        "message": "FLEX-IT-OUT FastAPI backend is running!"
+    }
