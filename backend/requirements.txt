@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pymongo[srv]
+pyjwt
+passlib[bcrypt]
+python-multipart
+email-validator
+opencv-python
+python-dotenv
+dnspython
