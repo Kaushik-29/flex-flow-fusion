@@ -7,11 +7,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import json
+
 # Centralized configuration management
 KEY_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY") or "firebase-key.json"
+firebase_json_str = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
 
 db = None
-if os.path.exists(KEY_PATH):
+if firebase_json_str:
+    try:
+        service_account_info = json.loads(firebase_json_str)
+        cred = credentials.Certificate(service_account_info)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("Successfully initialized Firebase Admin SDK from environment JSON string.")
+    except Exception as e:
+        print(f"Failed to initialize Firebase Admin SDK from environment JSON: {e}")
+elif os.path.exists(KEY_PATH):
     try:
         cred = credentials.Certificate(KEY_PATH)
         firebase_admin.initialize_app(cred)
@@ -21,6 +33,7 @@ if os.path.exists(KEY_PATH):
         print(f"Failed to initialize Firebase Admin SDK: {e}")
 else:
     print(f"Firebase Service Account Key not found at: {KEY_PATH}. Firestore operations will fail until configured.")
+
 
 # ----------------- OFFLINE MOCK DATABASE -----------------
 _OFFLINE_DB = {
