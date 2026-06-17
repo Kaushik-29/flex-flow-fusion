@@ -1,13 +1,24 @@
+import { auth, isConfigured } from './firebaseClient';
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Helper function to get auth token
-const getAuthToken = () => {
+const getAuthToken = async () => {
+  if (isConfigured && auth.currentUser) {
+    try {
+      const token = await auth.currentUser.getIdToken();
+      localStorage.setItem('authToken', token);
+      return token;
+    } catch (err) {
+      console.error("Error getting Firebase ID token:", err);
+    }
+  }
   return localStorage.getItem('authToken');
 };
 
 // Helper function to make authenticated requests
 const authFetch = async (url: string, options: RequestInit = {}) => {
-  const token = getAuthToken();
+  const token = await getAuthToken();
   
   if (!token) {
     throw new Error('No authentication token found. Please log in again.');

@@ -2,9 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
-from .db import get_database
-from .auth import get_current_user
-from bson import ObjectId
+from app.db import notification_repository, friend_repository
+from app.auth import get_current_user
 
 router = APIRouter(tags=["notifications"])
 
@@ -24,38 +23,17 @@ class Notification(BaseModel):
     read: bool = False
     created_at: datetime
 
-class FriendRequestCreate(BaseModel):
-    from_username: str
-    to_username: str
-
-class FriendRequestResponse(BaseModel):
-    id: str
-    from_username: str
-    to_username: str
-    timestamp: datetime
-    status: str
-
 @router.get("/", response_model=List[Notification])
 async def get_notifications(current_user = Depends(get_current_user)):
     """Get all notifications for the current user"""
-    db = get_database()
-    notifications = db["notifications"]
-    
-    # Get notifications for the current user
-    user_notifications = list(notifications.find({
-        "user_id": current_user.get("username")
-    }).sort("created_at", -1))
+    username = current_user.get("username")
+    user_notifications = notification_repository.get_all(username)
     
     # Format the data
-    def format_notification(notif):
-        notif["id"] = str(notif["_id"])
-        del notif["_id"]
-        # Handle both timestamp and created_at fields
-        if "timestamp" in notif and "created_at" not in notif:
-            notif["created_at"] = notif["timestamp"]
-        return notif
+    for notif in user_notifications:
+        notif["id"] = str(notif["id"])
     
-    return [format_notification(notif) for notif in user_notifications]
+    return user_notifications
 
 @router.post("/", response_model=Notification)
 async def create_notification(
@@ -63,9 +41,6 @@ async def create_notification(
     current_user = Depends(get_current_user)
 ):
     """Create a new notification"""
-    db = get_database()
-    notifications = db["notifications"]
-    
     notification_data = {
         "user_id": current_user.get("username"),
         "type": notification.type,
@@ -73,18 +48,14 @@ async def create_notification(
         "message": notification.message,
         "data": notification.data,
         "read": False,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.utcnow().isoformat()
     }
     
-    result = notifications.insert_one(notification_data)
-    
-    # Get the created notification to return the full object
-    created_notification = notifications.find_one({"_id": result.inserted_id})
-    if created_notification:
-        created_notification["id"] = str(created_notification["_id"])
-        del created_notification["_id"]
-        return created_notification
-    else:
+    try:
+        created = notification_repository.create(notification_data)
+        created["id"] = str(created["id"])
+        return created
+    except Exception:
         raise HTTPException(status_code=500, detail="Failed to create notification")
 
 @router.put("/{notification_id}/read")
@@ -93,19 +64,8 @@ async def mark_notification_as_read(
     current_user = Depends(get_current_user)
 ):
     """Mark a notification as read"""
-    db = get_database()
-    notifications = db["notifications"]
-    
-    # Update the notification
-    result = notifications.update_one(
-        {
-            "_id": ObjectId(notification_id),
-            "user_id": current_user.get("username")
-        },
-        {"$set": {"read": True}}
-    )
-    
-    if result.modified_count == 0:
+    success = notification_repository.mark_as_read(notification_id, current_user.get("username"))
+    if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
     
     return {"message": "Notification marked as read"}
@@ -116,15 +76,8 @@ async def delete_notification(
     current_user = Depends(get_current_user)
 ):
     """Delete a notification"""
-    db = get_database()
-    notifications = db["notifications"]
-    
-    result = notifications.delete_one({
-        "_id": ObjectId(notification_id),
-        "user_id": current_user.get("username")
-    })
-    
-    if result.deleted_count == 0:
+    success = notification_repository.delete(notification_id, current_user.get("username"))
+    if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
     
     return {"message": "Notification deleted successfully"}
@@ -133,45 +86,31 @@ async def delete_notification(
 @router.get("/friend-requests")
 async def get_friend_requests_notifications(current_user=Depends(get_current_user)):
     """Get friend request notifications"""
-    db = get_database()
-    friend_requests = db["friend_requests"]
+    username = current_user.get("username")
+    requests = friend_repository.get_requests_for_user(username)
     
-    # Get incoming friend requests
-    incoming_requests = list(friend_requests.find({
-        "to_username": current_user.get("username"),
-        "status": "pending"
-    }))
-    
-    # Convert to notification format
     notifications = []
-    for request in incoming_requests:
-        # Handle both timestamp and created_at fields
-        created_at = request.get("created_at", request.get("timestamp"))
-        notifications.append({
-            "id": str(request["_id"]),
-            "type": "friend_request",
-            "title": "New Friend Request",
-            "message": f"{request['from_username']} sent you a friend request",
-            "data": {
-                "from_username": request["from_username"],
-                "request_id": str(request["_id"]),
-                "created_at": created_at.isoformat() if created_at else None
-            },
-            "read": False,
-            "created_at": created_at
-        })
+    for req in requests:
+        if req["to_username"] == username:
+            created_at = req.get("created_at")
+            notifications.append({
+                "id": str(req["id"]),
+                "type": "friend_request",
+                "title": "New Friend Request",
+                "message": f"{req['from_username']} sent you a friend request",
+                "data": {
+                    "from_username": req["from_username"],
+                    "request_id": str(req["id"]),
+                    "created_at": created_at if isinstance(created_at, str) else created_at.isoformat() if created_at else None
+                },
+                "read": False,
+                "created_at": created_at
+            })
     
     return notifications
 
 @router.get("/unread-count")
 async def get_unread_count(current_user=Depends(get_current_user)):
     """Get count of unread notifications"""
-    db = get_database()
-    notifications = db["notifications"]
-    
-    count = notifications.count_documents({
-        "user_id": current_user.get("username"),
-        "read": False
-    })
-    
-    return {"unread_count": count} 
+    count = notification_repository.count_unread(current_user.get("username"))
+    return {"unread_count": count}

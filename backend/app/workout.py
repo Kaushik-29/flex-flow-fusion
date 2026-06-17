@@ -1,9 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.models import WorkoutSession
-from app.db import get_workout_collection
+from app.db import workout_repository
 from app.auth import get_current_user
 from datetime import datetime
-from bson.objectid import ObjectId
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/workout")
@@ -19,35 +17,33 @@ class WorkoutUpdateRequest(BaseModel):
 
 @router.post("/start")
 def start_workout(data: WorkoutStartRequest, user=Depends(get_current_user)):
-    workouts = get_workout_collection()
     session = {
         "user_id": user.get("username"),
         "type": data.type,
         "reps": 0,
         "feedback": "",
         "accuracy": 0.0,
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.utcnow().isoformat()
     }
-    result = workouts.insert_one(session)
-    return {"session_id": str(result.inserted_id)}
+    result = workout_repository.create(session)
+    return {"session_id": str(result.get("id"))}
 
 @router.post("/update")
 def update_workout(data: WorkoutUpdateRequest, user=Depends(get_current_user)):
-    workouts = get_workout_collection()
-    session = workouts.find_one({"_id": ObjectId(data.session_id), "user_id": user.get("username")})
-    if not session:
+    session = workout_repository.get_by_id(data.session_id)
+    if not session or session.get("user_id") != user.get("username"):
         raise HTTPException(status_code=404, detail="Session not found")
-    workouts.update_one(
-        {"_id": ObjectId(data.session_id)}, 
-        {"$set": {"reps": data.reps, "accuracy": data.accuracy, "feedback": data.feedback}}
-    )
+    
+    workout_repository.update(data.session_id, {
+        "reps": data.reps,
+        "accuracy": data.accuracy,
+        "feedback": data.feedback
+    })
     return {"msg": "Workout updated"}
 
 @router.get("/history")
 def workout_history(user=Depends(get_current_user)):
-    workouts = get_workout_collection()
-    sessions = list(workouts.find({"user_id": user.get("username")}))
+    sessions = workout_repository.get_history(user.get("username"))
     for s in sessions:
-        s["id"] = str(s["_id"])
-        del s["_id"]
-    return {"history": sessions} 
+        s["id"] = str(s.get("id"))
+    return {"history": sessions}

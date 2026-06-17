@@ -2,24 +2,22 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
-from .db import get_database
-from .auth import get_current_user
-from bson import ObjectId
+from app.db import points_repository, friend_repository, user_repository
+from app.auth import get_current_user
 
 router = APIRouter(tags=["points"])
 
-# Exercise configurations with reps per cycle
 EXERCISE_CONFIGS = {
     "squat": {"reps_per_cycle": 15, "points_per_cycle": 15},
     "push-up": {"reps_per_cycle": 10, "points_per_cycle": 10},
     "forward lunge": {"reps_per_cycle": 12, "points_per_cycle": 12},
     "side lunge": {"reps_per_cycle": 12, "points_per_cycle": 12},
     "jumping jack": {"reps_per_cycle": 20, "points_per_cycle": 20},
-    "plank": {"reps_per_cycle": 5, "points_per_cycle": 15},  # 5 reps = 3 seconds each
+    "plank": {"reps_per_cycle": 5, "points_per_cycle": 15},
     "mountain climber": {"reps_per_cycle": 15, "points_per_cycle": 15},
     "high knees": {"reps_per_cycle": 20, "points_per_cycle": 20},
-    "burpee": {"reps_per_cycle": 8, "points_per_cycle": 16},  # Burpees worth more points
-    "jump squat": {"reps_per_cycle": 12, "points_per_cycle": 18}  # Jump squats worth more points
+    "burpee": {"reps_per_cycle": 8, "points_per_cycle": 16},
+    "jump squat": {"reps_per_cycle": 12, "points_per_cycle": 18}
 }
 
 class PointsEarned(BaseModel):
@@ -41,11 +39,7 @@ async def calculate_points(
     current_user = Depends(get_current_user)
 ):
     """Calculate points for a completed workout session"""
-    db = get_database()
-    points_collection = db["user_points"]
-    
     exercise_lower = exercise.lower()
-    # Try direct match, then try stripping trailing 's' for plural
     if exercise_lower not in EXERCISE_CONFIGS:
         if exercise_lower.endswith('s') and exercise_lower[:-1] in EXERCISE_CONFIGS:
             exercise_lower = exercise_lower[:-1]
@@ -56,51 +50,41 @@ async def calculate_points(
     reps_per_cycle = config["reps_per_cycle"]
     points_per_cycle = config["points_per_cycle"]
     
-    # Calculate completed cycles (no partial points)
     cycles_completed = reps_completed // reps_per_cycle
     points_earned = cycles_completed * points_per_cycle
     
-    # Get or create user points record
     user_id = current_user.get("username")
-    user_points = points_collection.find_one({"user_id": user_id})
+    user_points = points_repository.get_by_user(user_id)
     
     if not user_points:
         user_points = {
             "user_id": user_id,
             "total_points": 0,
             "exercise_points": {},
-            "last_updated": datetime.utcnow()
+            "last_updated": datetime.utcnow().isoformat()
         }
-        points_collection.insert_one(user_points)
+        points_repository.create(user_points)
     
-    # Update points
     current_exercise_points = user_points.get("exercise_points", {}).get(exercise_lower, 0)
     new_exercise_points = current_exercise_points + points_earned
     new_total_points = user_points["total_points"] + points_earned
     
-    # Update database
-    points_collection.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {
-                "total_points": new_total_points,
-                f"exercise_points.{exercise_lower}": new_exercise_points,
-                "last_updated": datetime.utcnow()
-            }
-        }
-    )
+    # Update dict copy to save
+    exercise_points_updated = dict(user_points.get("exercise_points", {}))
+    exercise_points_updated[exercise_lower] = new_exercise_points
     
-    # Record the points earned for this session
+    points_repository.update_points(user_id, new_total_points, exercise_points_updated)
+    
     session_record = {
         "user_id": user_id,
         "exercise": exercise_lower,
         "reps_completed": reps_completed,
         "cycles_completed": cycles_completed,
         "points_earned": points_earned,
-        "timestamp": datetime.utcnow()
+        "timestamp": datetime.utcnow().isoformat()
     }
     
-    db["points_history"].insert_one(session_record)
+    points_repository.create_history_record(session_record)
     
     return {
         "exercise": exercise,
@@ -115,39 +99,28 @@ async def calculate_points(
 @router.get("/user")
 async def get_user_points(current_user = Depends(get_current_user)):
     """Get current user's points"""
-    db = get_database()
-    points_collection = db["user_points"]
-    
     user_id = current_user.get("username")
-    user_points = points_collection.find_one({"user_id": user_id})
+    user_points = points_repository.get_by_user(user_id)
     
     if not user_points:
         return {
             "user_id": user_id,
             "total_points": 0,
             "exercise_points": {},
-            "last_updated": datetime.utcnow()
+            "last_updated": datetime.utcnow().isoformat()
         }
     
-    # Remove MongoDB _id field to avoid serialization issues
-    if "_id" in user_points:
-        user_points["_id"] = str(user_points["_id"])
-        del user_points["_id"]
+    user_points["id"] = str(user_points.get("id"))
     return user_points
 
 @router.get("/leaderboard")
 async def get_points_leaderboard(limit: int = 50):
     """Get global points leaderboard"""
-    db = get_database()
-    points_collection = db["user_points"]
-    users_collection = db["users"]
-    
-    # Get top users by total points
-    top_users = list(points_collection.find().sort("total_points", -1).limit(limit))
-    
+    top_users = points_repository.get_leaderboard(limit)
     leaderboard = []
+    
     for i, user_points in enumerate(top_users):
-        user = users_collection.find_one({"username": user_points["user_id"]})
+        user = user_repository.get_by_username(user_points["user_id"])
         if user:
             leaderboard.append({
                 "rank": i + 1,
@@ -164,32 +137,24 @@ async def get_points_leaderboard(limit: int = 50):
 @router.get("/friends")
 async def get_friends_points(current_user = Depends(get_current_user)):
     """Get points for user's friends"""
-    db = get_database()
-    points_collection = db["user_points"]
-    friends_collection = db["friends"]
-    
     user_id = current_user.get("username")
     
-    # Get user's friends
-    friends = list(friends_collection.find({
-        "$or": [
-            {"user_id": user_id, "status": "accepted"},
-            {"friend_id": user_id, "status": "accepted"}
-        ]
-    }))
+    # Get user's friends (using standardized user1/user2 schema)
+    friendships = friend_repository.get_friends(user_id)
     
     friend_ids = []
-    for friend in friends:
-        if friend["user_id"] == user_id:
-            friend_ids.append(friend["friend_id"])
+    for friend in friendships:
+        if friend["user1"] == user_id:
+            friend_ids.append(friend["user2"])
         else:
-            friend_ids.append(friend["user_id"])
+            friend_ids.append(friend["user1"])
     
-    # Get points for friends
-    friends_points = list(points_collection.find({"user_id": {"$in": friend_ids}}))
+    friends_points = points_repository.get_friends_points(friend_ids)
     
-    # Get current user's points
-    user_points = points_collection.find_one({"user_id": user_id})
+    for fp in friends_points:
+        fp["id"] = str(fp.get("id"))
+        
+    user_points = points_repository.get_by_user(user_id)
     current_user_points = user_points.get("total_points", 0) if user_points else 0
     
     return {
@@ -204,25 +169,15 @@ async def get_points_history(
     current_user = Depends(get_current_user)
 ):
     """Get user's points history"""
-    db = get_database()
-    history_collection = db["points_history"]
-    
     user_id = current_user.get("username")
-    query = {"user_id": user_id}
+    history = points_repository.get_history(user_id, exercise, limit)
     
-    if exercise:
-        query["exercise"] = exercise.lower()
-    
-    history = list(history_collection.find(query).sort("timestamp", -1).limit(limit))
-    
-    # Format the data
     for record in history:
-        record["id"] = str(record["_id"])
-        del record["_id"]
+        record["id"] = str(record.get("id"))
     
     return {"history": history}
 
 @router.get("/config")
 async def get_exercise_configs():
     """Get exercise configurations"""
-    return {"exercise_configs": EXERCISE_CONFIGS} 
+    return {"exercise_configs": EXERCISE_CONFIGS}

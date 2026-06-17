@@ -1,462 +1,547 @@
 import os
-import re
-from collections.abc import Iterable
-from contextlib import contextmanager
-from copy import deepcopy
 from datetime import datetime
-from typing import Any
+from typing import Any, List, Optional
+import firebase_admin
+from firebase_admin import credentials, firestore
+from dotenv import load_dotenv
 
-from bson.objectid import ObjectId
-from pymongo.errors import PyMongoError
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, MetaData, String, Table, Text, create_engine, delete, func, insert, select, update, JSON
-from sqlalchemy.exc import SQLAlchemyError
+load_dotenv()
 
-JSONB = JSON
+# Centralized configuration management
+KEY_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY") or "firebase-key.json"
 
-
-
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    pass
-
-
-def _normalize_database_url(url: str) -> str:
-    if url.startswith("postgresql+psycopg2://"):
-        return url
-    if url.startswith("postgresql://"):
-        return "postgresql+psycopg2://" + url[len("postgresql://"):]
-    if url.startswith("postgres://"):
-        return "postgresql+psycopg2://" + url[len("postgres://"):]
-    return url
-
-
-DATABASE_URL = _normalize_database_url(
-    os.getenv("DATABASE_URL")
-    or os.getenv("SUPABASE_DATABASE_URL")
-    or "sqlite:///local.db"
-)
-
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}, future=True)
+db = None
+if os.path.exists(KEY_PATH):
+    try:
+        cred = credentials.Certificate(KEY_PATH)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print(f"Successfully initialized Firebase Admin SDK from {KEY_PATH}")
+    except Exception as e:
+        print(f"Failed to initialize Firebase Admin SDK: {e}")
 else:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
-metadata = MetaData()
+    print(f"Firebase Service Account Key not found at: {KEY_PATH}. Firestore operations will fail until configured.")
 
-
-def generate_id() -> str:
-    return str(ObjectId())
-
-
-users_table = Table(
-    "users",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("name", String(255), nullable=False),
-    Column("username", String(255), nullable=False, unique=True, index=True),
-    Column("email", String(255), nullable=False, unique=True, index=True),
-    Column("hashed_password", Text, nullable=False),
-    Column("avatar", Text, nullable=True),
-    Column("created_at", DateTime, nullable=False, default=datetime.utcnow),
-)
-
-workouts_table = Table(
-    "workouts",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("user_id", String(255), nullable=False, index=True),
-    Column("type", String(255), nullable=False),
-    Column("reps", Integer, nullable=False, default=0),
-    Column("feedback", Text, nullable=False, default=""),
-    Column("accuracy", Float, nullable=False, default=0.0),
-    Column("timestamp", DateTime, nullable=False, default=datetime.utcnow, index=True),
-)
-
-friend_requests_table = Table(
-    "friend_requests",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("from_username", String(255), nullable=False, index=True),
-    Column("to_username", String(255), nullable=False, index=True),
-    Column("status", String(32), nullable=False, default="pending", index=True),
-    Column("created_at", DateTime, nullable=False, default=datetime.utcnow),
-    Column("responded_at", DateTime, nullable=True),
-)
-
-friends_table = Table(
-    "friends",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("user1", String(255), nullable=True, index=True),
-    Column("user2", String(255), nullable=True, index=True),
-    Column("user_id", String(255), nullable=True, index=True),
-    Column("friend_id", String(255), nullable=True, index=True),
-    Column("status", String(32), nullable=False, default="accepted", index=True),
-    Column("created_at", DateTime, nullable=False, default=datetime.utcnow),
-)
-
-notifications_table = Table(
-    "notifications",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("user_id", String(255), nullable=False, index=True),
-    Column("type", String(255), nullable=False),
-    Column("title", Text, nullable=False),
-    Column("message", Text, nullable=False),
-    Column("data", JSONB, nullable=True),
-    Column("read", Boolean, nullable=False, default=False, index=True),
-    Column("created_at", DateTime, nullable=False, default=datetime.utcnow, index=True),
-)
-
-user_points_table = Table(
-    "user_points",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("user_id", String(255), nullable=False, unique=True, index=True),
-    Column("total_points", Integer, nullable=False, default=0),
-    Column("exercise_points", JSONB, nullable=False, default=dict),
-    Column("last_updated", DateTime, nullable=False, default=datetime.utcnow),
-)
-
-points_history_table = Table(
-    "points_history",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("user_id", String(255), nullable=False, index=True),
-    Column("exercise", String(255), nullable=False, index=True),
-    Column("reps_completed", Integer, nullable=False),
-    Column("cycles_completed", Integer, nullable=False),
-    Column("points_earned", Integer, nullable=False),
-    Column("timestamp", DateTime, nullable=False, default=datetime.utcnow, index=True),
-)
-
-sessions_table = Table(
-    "sessions",
-    metadata,
-    Column("id", String(24), primary_key=True),
-    Column("user_id", String(255), nullable=False, index=True),
-    Column("timestamp", DateTime, nullable=False, default=datetime.utcnow, index=True),
-    Column("feedback", Text, nullable=False),
-    Column("keypoints", JSONB, nullable=True),
-)
-
-TABLES = {
-    "users": users_table,
-    "workouts": workouts_table,
-    "friend_requests": friend_requests_table,
-    "friends": friends_table,
-    "notifications": notifications_table,
-    "user_points": user_points_table,
-    "points_history": points_history_table,
-    "sessions": sessions_table,
+# ----------------- OFFLINE MOCK DATABASE -----------------
+_OFFLINE_DB = {
+    "users": {},
+    "workouts": {},
+    "friend_requests": {},
+    "friends": [],
+    "notifications": {},
+    "user_points": {},
+    "points_history": [],
+    "sessions": {}
 }
 
-_tables_ready = False
+# ----------------- REPOSITORY LAYER -----------------
 
-
-def ensure_tables() -> None:
-    global _tables_ready
-    if _tables_ready:
-        return
-    try:
-        metadata.create_all(engine)
-        _tables_ready = True
-    except SQLAlchemyError as exc:
-        raise PyMongoError(str(exc)) from exc
-
-
-@contextmanager
-def get_connection():
-    ensure_tables()
-    with engine.begin() as connection:
-        yield connection
-
-
-def _normalize_scalar(value: Any) -> Any:
-    if isinstance(value, ObjectId):
-        return str(value)
-    return value
-
-
-def _get_nested_value(document: dict[str, Any], dotted_key: str) -> Any:
-    current: Any = document
-    for part in dotted_key.split("."):
-        if not isinstance(current, dict):
+class UserRepository:
+    def get_by_id(self, user_id: str) -> Optional[dict]:
+        if not db:
+            return _OFFLINE_DB["users"].get(user_id)
+        try:
+            doc = db.collection("users").document(user_id).get()
+            return {"id": doc.id, **doc.to_dict()} if doc.exists else None
+        except Exception as e:
+            print(f"UserRepository.get_by_id error: {e}")
             return None
-        current = current.get(part)
-    return current
+
+    def get_by_username(self, username: str) -> Optional[dict]:
+        if not db:
+            for u in _OFFLINE_DB["users"].values():
+                if u.get("username") == username:
+                    return u
+            return None
+        try:
+            docs = db.collection("users").where("username", "==", username).limit(1).get()
+            return {"id": docs[0].id, **docs[0].to_dict()} if docs else None
+        except Exception as e:
+            print(f"UserRepository.get_by_username error: {e}")
+            return None
+
+    def get_by_email(self, email: str) -> Optional[dict]:
+        if not db:
+            for u in _OFFLINE_DB["users"].values():
+                if u.get("email") == email:
+                    return u
+            return None
+        try:
+            docs = db.collection("users").where("email", "==", email).limit(1).get()
+            return {"id": docs[0].id, **docs[0].to_dict()} if docs else None
+        except Exception as e:
+            print(f"UserRepository.get_by_email error: {e}")
+            return None
+
+    def create(self, user_data: dict) -> dict:
+        if not db:
+            uid = user_data.get("id")
+            _OFFLINE_DB["users"][uid] = user_data
+            return user_data
+        try:
+            uid = user_data.get("id")
+            data = dict(user_data)
+            data.pop("id", None)
+            db.collection("users").document(uid).set(data)
+            return user_data
+        except Exception as e:
+            print(f"UserRepository.create error: {e}")
+            return user_data
+
+    def search(self, query: str) -> List[dict]:
+        if not db:
+            results = []
+            q = query.lower()
+            for u in _OFFLINE_DB["users"].values():
+                username = u.get("username", "").lower()
+                name = u.get("name", "").lower()
+                if q in username or q in name:
+                    results.append(u)
+            return results[:10]
+        try:
+            # Fetch and filter in-memory to bypass complex Firestore indexing
+            docs = db.collection("users").stream()
+            results = []
+            q = query.lower()
+            for doc in docs:
+                d = doc.to_dict()
+                username = d.get("username", "").lower()
+                name = d.get("name", "").lower()
+                if q in username or q in name:
+                    results.append({"id": doc.id, **d})
+                    if len(results) >= 10:
+                        break
+            return results
+        except Exception as e:
+            print(f"UserRepository.search error: {e}")
+            return []
 
 
-def _set_nested_value(document: dict[str, Any], dotted_key: str, value: Any) -> None:
-    parts = dotted_key.split(".")
-    current = document
-    for part in parts[:-1]:
-        child = current.get(part)
-        if not isinstance(child, dict):
-            child = {}
-            current[part] = child
-        current = child
-    current[parts[-1]] = value
+class WorkoutRepository:
+    def create(self, workout_data: dict) -> dict:
+        if not db:
+            import uuid
+            data = dict(workout_data)
+            data["id"] = data.get("id") or str(uuid.uuid4())
+            _OFFLINE_DB["workouts"][data["id"]] = data
+            return data
+        try:
+            doc_ref = db.collection("workouts").document()
+            data = dict(workout_data)
+            data["id"] = doc_ref.id
+            doc_ref.set(data)
+            return data
+        except Exception as e:
+            print(f"WorkoutRepository.create error: {e}")
+            raise e
 
-
-def _document_matches(document: dict[str, Any], criteria: dict[str, Any] | None) -> bool:
-    if not criteria:
-        return True
-
-    for key, expected in criteria.items():
-        if key == "$or":
-            return any(_document_matches(document, clause) for clause in expected)
-        if key == "$and":
-            return all(_document_matches(document, clause) for clause in expected)
-
-        doc_value = _get_nested_value(document, key)
-
-        if isinstance(expected, dict):
-            for operator, operand in expected.items():
-                if operator == "$options":
-                    continue
-                if operator == "$regex":
-                    flags = re.IGNORECASE if str(expected.get("$options", "")).lower().find("i") != -1 else 0
-                    if doc_value is None or re.search(str(operand), str(doc_value), flags) is None:
-                        return False
-                elif operator == "$gte":
-                    if doc_value is None or doc_value < operand:
-                        return False
-                elif operator == "$in":
-                    normalized_doc = _normalize_scalar(doc_value)
-                    normalized_choices = {_normalize_scalar(item) for item in operand}
-                    if normalized_doc not in normalized_choices:
-                        return False
-                else:
-                    if _normalize_scalar(doc_value) != _normalize_scalar(operand):
-                        return False
-            continue
-
-        if _normalize_scalar(doc_value) != _normalize_scalar(expected):
+    def update(self, session_id: str, update_data: dict) -> bool:
+        if not db:
+            if session_id in _OFFLINE_DB["workouts"]:
+                _OFFLINE_DB["workouts"][session_id].update(update_data)
+                return True
+            return False
+        try:
+            db.collection("workouts").document(session_id).update(update_data)
+            return True
+        except Exception as e:
+            print(f"WorkoutRepository.update error: {e}")
             return False
 
-    return True
+    def get_by_id(self, session_id: str) -> Optional[dict]:
+        if not db:
+            return _OFFLINE_DB["workouts"].get(session_id)
+        try:
+            doc = db.collection("workouts").document(session_id).get()
+            return {"id": doc.id, **doc.to_dict()} if doc.exists else None
+        except Exception as e:
+            print(f"WorkoutRepository.get_by_id error: {e}")
+            return None
 
+    def get_history(self, user_id: str) -> List[dict]:
+        if not db:
+            results = [w for w in _OFFLINE_DB["workouts"].values() if w.get("user_id") == user_id]
+            results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            return results
+        try:
+            docs = db.collection("workouts").where("user_id", "==", user_id).get()
+            results = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+            # In-memory sorting to avoid composite index requirements
+            results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            return results
+        except Exception as e:
+            print(f"WorkoutRepository.get_history error: {e}")
+            return []
 
-class InsertOneResult:
-    def __init__(self, inserted_id: str):
-        self.inserted_id = inserted_id
-
-
-class UpdateOneResult:
-    def __init__(self, modified_count: int):
-        self.modified_count = modified_count
-
-
-class DeleteOneResult:
-    def __init__(self, deleted_count: int):
-        self.deleted_count = deleted_count
-
-
-class QueryCursor:
-    def __init__(self, documents: list[dict[str, Any]]):
-        self._documents = documents
-
-    def sort(self, field: str, direction: int):
-        reverse = direction == -1
-        self._documents.sort(key=lambda item: (item.get(field) is None, item.get(field)), reverse=reverse)
-        return self
-
-    def limit(self, limit_value: int):
-        self._documents = self._documents[:limit_value]
-        return self
-
-    def __iter__(self):
-        return iter(deepcopy(self._documents))
-
-    def __len__(self):
-        return len(self._documents)
-
-
-class CollectionWrapper:
-    def __init__(self, table: Table):
-        self.table = table
-
-    def _load_documents(self) -> list[dict[str, Any]]:
-        with get_connection() as connection:
-            rows = connection.execute(select(self.table)).mappings().all()
-        documents: list[dict[str, Any]] = []
-        for row in rows:
-            document = dict(row)
-            if "_id" not in document and "id" in document:
-                document["_id"] = document["id"]
-            elif "id" not in document and "_id" in document:
-                document["id"] = document["_id"]
-            documents.append(document)
-        return documents
-
-    def _filter_documents(self, filter_query: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        documents = self._load_documents()
-        return [document for document in documents if _document_matches(document, filter_query)]
-
-    def find_one(self, filter_query: dict[str, Any] | None = None):
-        matches = self._filter_documents(filter_query)
-        return deepcopy(matches[0]) if matches else None
-
-    def find(self, filter_query: dict[str, Any] | None = None):
-        return QueryCursor(self._filter_documents(filter_query))
-
-    def insert_one(self, document: dict[str, Any]):
-        payload = deepcopy(document)
-        document_id = str(payload.get("_id") or payload.get("id") or generate_id())
-        payload["id"] = document_id
-        payload.pop("_id", None)
-
-        row = {}
-        for column in self.table.columns:
-            if column.name == "id":
-                row[column.name] = payload["id"]
+    def get_leaderboard(self, period: str, limit: int) -> List[dict]:
+        try:
+            now = datetime.utcnow()
+            if not db:
+                workouts = list(_OFFLINE_DB["workouts"].values())
             else:
-                row[column.name] = payload.get(column.name)
+                docs = db.collection("workouts").get()
+                workouts = [doc.to_dict() for doc in docs]
 
+            grouped = {}
+            for w in workouts:
+                # Filter by timestamp manually
+                ts_str = w.get("timestamp", "")
+                if not ts_str: continue
+                try:
+                    # Parse timestamp format (standard ISO)
+                    w_date = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+
+                if period == "daily" and (now - w_date).days >= 1:
+                    continue
+                elif period == "weekly" and (now - w_date).days >= 7:
+                    continue
+
+                uid = w.get("user_id")
+                if not uid: continue
+                
+                if uid not in grouped:
+                    grouped[uid] = {"total_reps": 0, "accuracy_sum": 0.0, "total_workouts": 0}
+                grouped[uid]["total_reps"] += w.get("reps", 0)
+                grouped[uid]["accuracy_sum"] += w.get("accuracy", 0.0)
+                grouped[uid]["total_workouts"] += 1
+
+            results = []
+            for uid, stats in grouped.items():
+                results.append({
+                    "_id": uid,
+                    "total_reps": stats["total_reps"],
+                    "avg_accuracy": stats["accuracy_sum"] / stats["total_workouts"],
+                    "total_workouts": stats["total_workouts"]
+                })
+
+            results.sort(key=lambda x: x["total_reps"], reverse=True)
+            return results[:limit]
+        except Exception as e:
+            print(f"WorkoutRepository.get_leaderboard error: {e}")
+            return []
+
+
+class FriendRepository:
+    def send_request(self, request_data: dict) -> dict:
+        if not db:
+            import uuid
+            data = dict(request_data)
+            data["id"] = data.get("id") or str(uuid.uuid4())
+            _OFFLINE_DB["friend_requests"][data["id"]] = data
+            return data
         try:
-            with get_connection() as connection:
-                connection.execute(insert(self.table).values(**row))
-        except SQLAlchemyError as exc:
-            raise PyMongoError(str(exc)) from exc
+            doc_ref = db.collection("friend_requests").document()
+            data = dict(request_data)
+            data["id"] = doc_ref.id
+            doc_ref.set(data)
+            return data
+        except Exception as e:
+            print(f"FriendRepository.send_request error: {e}")
+            raise e
 
-        return InsertOneResult(document_id)
-
-    def update_one(self, filter_query: dict[str, Any], update_payload: dict[str, Any]):
-        matches = self._filter_documents(filter_query)
-        if not matches:
-            return UpdateOneResult(0)
-
-        original = matches[0]
-        updated = deepcopy(original)
-
-        set_payload = update_payload.get("$set", update_payload)
-        for key, value in set_payload.items():
-            if "." in key:
-                root_key, nested_path = key.split(".", 1)
-                container = updated.get(root_key)
-                if not isinstance(container, dict):
-                    container = {}
-                _set_nested_value(container, nested_path, value)
-                updated[root_key] = container
-            else:
-                updated[key] = value
-
-        row_update = {
-            column.name: updated.get(column.name)
-            for column in self.table.columns
-            if column.name != "id"
-        }
-
+    def get_request(self, request_id: str, to_username: str) -> Optional[dict]:
+        if not db:
+            req = _OFFLINE_DB["friend_requests"].get(request_id)
+            if req and req.get("to_username") == to_username and req.get("status") == "pending":
+                return req
+            return None
         try:
-            with get_connection() as connection:
-                connection.execute(
-                    update(self.table)
-                    .where(self.table.c.id == original["id"])
-                    .values(**row_update)
-                )
-        except SQLAlchemyError as exc:
-            raise PyMongoError(str(exc)) from exc
+            doc = db.collection("friend_requests").document(request_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                if data.get("to_username") == to_username and data.get("status") == "pending":
+                    return {"id": doc.id, **data}
+            return None
+        except Exception as e:
+            print(f"FriendRepository.get_request error: {e}")
+            return None
 
-        return UpdateOneResult(1)
-
-    def delete_one(self, filter_query: dict[str, Any]):
-        matches = self._filter_documents(filter_query)
-        if not matches:
-            return DeleteOneResult(0)
-
-        original = matches[0]
+    def get_requests_for_user(self, username: str) -> List[dict]:
+        if not db:
+            return [r for r in _OFFLINE_DB["friend_requests"].values() if (r.get("to_username") == username or r.get("from_username") == username) and r.get("status") == "pending"]
         try:
-            with get_connection() as connection:
-                connection.execute(delete(self.table).where(self.table.c.id == original["id"]))
-        except SQLAlchemyError as exc:
-            raise PyMongoError(str(exc)) from exc
+            incoming = db.collection("friend_requests").where("to_username", "==", username).where("status", "==", "pending").get()
+            outgoing = db.collection("friend_requests").where("from_username", "==", username).where("status", "==", "pending").get()
+            
+            results = []
+            seen = set()
+            for doc in incoming + outgoing:
+                if doc.id not in seen:
+                    seen.add(doc.id)
+                    results.append({"id": doc.id, **doc.to_dict()})
+            return results
+        except Exception as e:
+            print(f"FriendRepository.get_requests_for_user error: {e}")
+            return []
 
-        return DeleteOneResult(1)
+    def respond_to_request(self, request_id: str, action: str) -> bool:
+        if not db:
+            if request_id in _OFFLINE_DB["friend_requests"]:
+                _OFFLINE_DB["friend_requests"][request_id]["status"] = action
+                _OFFLINE_DB["friend_requests"][request_id]["responded_at"] = datetime.utcnow().isoformat()
+                return True
+            return False
+        try:
+            db.collection("friend_requests").document(request_id).update({
+                "status": action,
+                "responded_at": datetime.utcnow().isoformat()
+            })
+            return True
+        except Exception as e:
+            print(f"FriendRepository.respond_to_request error: {e}")
+            return False
 
-    def count_documents(self, filter_query: dict[str, Any]):
-        return len(self._filter_documents(filter_query))
+    def create_friendship(self, friendship_data: dict) -> dict:
+        if not db:
+            import uuid
+            data = dict(friendship_data)
+            data["id"] = data.get("id") or str(uuid.uuid4())
+            _OFFLINE_DB["friends"].append(data)
+            return data
+        try:
+            doc_ref = db.collection("friends").document()
+            data = dict(friendship_data)
+            data["id"] = doc_ref.id
+            doc_ref.set(data)
+            return data
+        except Exception as e:
+            print(f"FriendRepository.create_friendship error: {e}")
+            return friendship_data
 
-    def aggregate(self, pipeline: list[dict[str, Any]]):
-        documents = self._load_documents()
-
-        for stage in pipeline:
-            if "$match" in stage:
-                documents = [document for document in documents if _document_matches(document, stage["$match"])]
-            elif "$group" in stage:
-                group_spec = stage["$group"]
-                grouped: dict[Any, dict[str, Any]] = {}
-
-                for document in documents:
-                    group_key = group_spec.get("_id")
-                    if isinstance(group_key, str) and group_key.startswith("$"):
-                        group_key = _get_nested_value(document, group_key[1:])
-
-                    bucket = grouped.setdefault(group_key, {"_id": group_key, "__avg": {}})
-
-                    for field_name, expression in group_spec.items():
-                        if field_name == "_id":
-                            continue
-                        if isinstance(expression, dict) and "$sum" in expression:
-                            operand = expression["$sum"]
-                            if operand == 1:
-                                value = 1
-                            elif isinstance(operand, str) and operand.startswith("$"):
-                                value = _get_nested_value(document, operand[1:]) or 0
-                            else:
-                                value = operand or 0
-                            bucket[field_name] = bucket.get(field_name, 0) + value
-                        elif isinstance(expression, dict) and "$avg" in expression:
-                            operand = expression["$avg"]
-                            if isinstance(operand, str) and operand.startswith("$"):
-                                value = _get_nested_value(document, operand[1:]) or 0
-                            else:
-                                value = operand or 0
-                            avg_bucket = bucket["__avg"].setdefault(field_name, {"sum": 0, "count": 0})
-                            avg_bucket["sum"] += value
-                            avg_bucket["count"] += 1
-
-                aggregated: list[dict[str, Any]] = []
-                for bucket in grouped.values():
-                    for field_name, value in bucket.pop("__avg", {}).items():
-                        bucket[field_name] = (value["sum"] / value["count"]) if value["count"] else 0
-                    aggregated.append(bucket)
-                documents = aggregated
-            elif "$sort" in stage:
-                sort_spec = stage["$sort"]
-                for field_name, direction in reversed(list(sort_spec.items())):
-                    reverse = direction == -1
-                    documents.sort(key=lambda item: (item.get(field_name) is None, item.get(field_name)), reverse=reverse)
-            elif "$limit" in stage:
-                documents = documents[: stage["$limit"]]
-
-        return QueryCursor(documents)
+    def get_friends(self, username: str) -> List[dict]:
+        if not db:
+            return [f for f in _OFFLINE_DB["friends"] if f.get("user1") == username or f.get("user2") == username]
+        try:
+            friends1 = db.collection("friends").where("user1", "==", username).get()
+            friends2 = db.collection("friends").where("user2", "==", username).get()
+            return [{"id": doc.id, **doc.to_dict()} for doc in friends1 + friends2]
+        except Exception as e:
+            print(f"FriendRepository.get_friends error: {e}")
+            return []
 
 
-class DatabaseWrapper:
-    def __getitem__(self, collection_name: str):
-        table = TABLES.get(collection_name)
-        if table is None:
-            raise KeyError(collection_name)
-        return CollectionWrapper(table)
+class NotificationRepository:
+    def get_all(self, user_id: str) -> List[dict]:
+        if not db:
+            results = [n for n in _OFFLINE_DB["notifications"].values() if n.get("user_id") == user_id]
+            results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            return results
+        try:
+            docs = db.collection("notifications").where("user_id", "==", user_id).get()
+            results = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+            results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            return results
+        except Exception as e:
+            print(f"NotificationRepository.get_all error: {e}")
+            return []
+
+    def create(self, notification_data: dict) -> dict:
+        if not db:
+            import uuid
+            data = dict(notification_data)
+            data["id"] = data.get("id") or str(uuid.uuid4())
+            _OFFLINE_DB["notifications"][data["id"]] = data
+            return data
+        try:
+            doc_ref = db.collection("notifications").document()
+            data = dict(notification_data)
+            data["id"] = doc_ref.id
+            doc_ref.set(data)
+            return data
+        except Exception as e:
+            print(f"NotificationRepository.create error: {e}")
+            raise e
+
+    def mark_as_read(self, notification_id: str, user_id: str) -> bool:
+        if not db:
+            n = _OFFLINE_DB["notifications"].get(notification_id)
+            if n and n.get("user_id") == user_id:
+                n["read"] = True
+                return True
+            return False
+        try:
+            doc_ref = db.collection("notifications").document(notification_id)
+            doc = doc_ref.get()
+            if doc.exists and doc.to_dict().get("user_id") == user_id:
+                doc_ref.update({"read": True})
+                return True
+            return False
+        except Exception as e:
+            print(f"NotificationRepository.mark_as_read error: {e}")
+            return False
+
+    def delete(self, notification_id: str, user_id: str) -> bool:
+        if not db:
+            if notification_id in _OFFLINE_DB["notifications"] and _OFFLINE_DB["notifications"][notification_id].get("user_id") == user_id:
+                del _OFFLINE_DB["notifications"][notification_id]
+                return True
+            return False
+        try:
+            doc_ref = db.collection("notifications").document(notification_id)
+            doc = doc_ref.get()
+            if doc.exists and doc.to_dict().get("user_id") == user_id:
+                doc_ref.delete()
+                return True
+            return False
+        except Exception as e:
+            print(f"NotificationRepository.delete error: {e}")
+            return False
+
+    def count_unread(self, user_id: str) -> int:
+        if not db:
+            return sum(1 for n in _OFFLINE_DB["notifications"].values() if n.get("user_id") == user_id and not n.get("read", False))
+        try:
+            docs = db.collection("notifications").where("user_id", "==", user_id).where("read", "==", False).get()
+            return len(docs)
+        except Exception as e:
+            print(f"NotificationRepository.count_unread error: {e}")
+            return 0
 
 
-db = DatabaseWrapper()
+class PointsRepository:
+    def get_by_user(self, user_id: str) -> Optional[dict]:
+        if not db:
+            for p in _OFFLINE_DB["user_points"].values():
+                if p.get("user_id") == user_id:
+                    return p
+            return None
+        try:
+            docs = db.collection("user_points").where("user_id", "==", user_id).limit(1).get()
+            return {"id": docs[0].id, **docs[0].to_dict()} if docs else None
+        except Exception as e:
+            print(f"PointsRepository.get_by_user error: {e}")
+            return None
+
+    def create(self, points_data: dict) -> dict:
+        if not db:
+            import uuid
+            data = dict(points_data)
+            data["id"] = data.get("id") or str(uuid.uuid4())
+            _OFFLINE_DB["user_points"][data["id"]] = data
+            return data
+        try:
+            doc_ref = db.collection("user_points").document()
+            data = dict(points_data)
+            data["id"] = doc_ref.id
+            doc_ref.set(data)
+            return data
+        except Exception as e:
+            print(f"PointsRepository.create error: {e}")
+            return points_data
+
+    def update_points(self, user_id: str, total_points: int, exercise_points: dict) -> bool:
+        if not db:
+            for p in _OFFLINE_DB["user_points"].values():
+                if p.get("user_id") == user_id:
+                    p["total_points"] = total_points
+                    p["exercise_points"] = exercise_points
+                    p["last_updated"] = datetime.utcnow().isoformat()
+                    return True
+            return False
+        try:
+            docs = db.collection("user_points").where("user_id", "==", user_id).limit(1).get()
+            if docs:
+                docs[0].reference.update({
+                    "total_points": total_points,
+                    "exercise_points": exercise_points,
+                    "last_updated": datetime.utcnow().isoformat()
+                })
+                return True
+            return False
+        except Exception as e:
+            print(f"PointsRepository.update_points error: {e}")
+            return False
+
+    def get_leaderboard(self, limit: int) -> List[dict]:
+        if not db:
+            results = list(_OFFLINE_DB["user_points"].values())
+            results.sort(key=lambda x: x.get("total_points", 0), reverse=True)
+            return results[:limit]
+        try:
+            docs = db.collection("user_points").get()
+            results = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+            results.sort(key=lambda x: x.get("total_points", 0), reverse=True)
+            return results[:limit]
+        except Exception as e:
+            print(f"PointsRepository.get_leaderboard error: {e}")
+            return []
+
+    def get_friends_points(self, friend_ids: List[str]) -> List[dict]:
+        if not friend_ids: return []
+        if not db:
+            return [p for p in _OFFLINE_DB["user_points"].values() if p.get("user_id") in friend_ids]
+        try:
+            results = []
+            for i in range(0, len(friend_ids), 30):
+                chunk = friend_ids[i:i+30]
+                docs = db.collection("user_points").where("user_id", "in", chunk).get()
+                results.extend([{"id": doc.id, **doc.to_dict()} for doc in docs])
+            return results
+        except Exception as e:
+            print(f"PointsRepository.get_friends_points error: {e}")
+            return []
+
+    def create_history_record(self, record_data: dict) -> dict:
+        if not db:
+            import uuid
+            data = dict(record_data)
+            data["id"] = data.get("id") or str(uuid.uuid4())
+            _OFFLINE_DB["points_history"].append(data)
+            return data
+        try:
+            doc_ref = db.collection("points_history").document()
+            data = dict(record_data)
+            data["id"] = doc_ref.id
+            doc_ref.set(data)
+            return data
+        except Exception as e:
+            print(f"PointsRepository.create_history_record error: {e}")
+            return record_data
+
+    def get_history(self, user_id: str, exercise: Optional[str] = None, limit: int = 20) -> List[dict]:
+        if not db:
+            results = [r for r in _OFFLINE_DB["points_history"] if r.get("user_id") == user_id]
+            if exercise:
+                results = [r for r in results if r.get("exercise") == exercise]
+            results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            return results[:limit]
+        try:
+            query = db.collection("points_history").where("user_id", "==", user_id)
+            if exercise:
+                query = query.where("exercise", "==", exercise)
+            docs = query.get()
+            results = [{"id": doc.id, **doc.to_dict()} for doc in docs]
+            results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            return results[:limit]
+        except Exception as e:
+            print(f"PointsRepository.get_history error: {e}")
+            return []
 
 
-def get_database():
-    return db
+class SessionRepository:
+    def create(self, session_data: dict) -> dict:
+        if not db:
+            import uuid
+            data = dict(session_data)
+            data["id"] = data.get("id") or str(uuid.uuid4())
+            _OFFLINE_DB["sessions"][data["id"]] = data
+            return data
+        try:
+            doc_ref = db.collection("sessions").document()
+            data = dict(session_data)
+            data["id"] = doc_ref.id
+            doc_ref.set(data)
+            return data
+        except Exception as e:
+            print(f"SessionRepository.create error: {e}")
+            return session_data
 
 
-def get_user_collection():
-    return db["users"]
-
-
-def get_workout_collection():
-    return db["workouts"]
-
-
-def get_scores_collection():
-    return db["user_points"]
+user_repository = UserRepository()
+workout_repository = WorkoutRepository()
+friend_repository = FriendRepository()
+notification_repository = NotificationRepository()
+points_repository = PointsRepository()
+session_repository = SessionRepository()

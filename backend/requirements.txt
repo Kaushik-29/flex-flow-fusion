@@ -1,12 +1,8 @@
 fastapi
 uvicorn
-pymongo[srv]
 pyjwt
-passlib[bcrypt]
 python-multipart
 email-validator
 opencv-python
 python-dotenv
-dnspython
-sqlalchemy
-psycopg2-binary
+firebase-admin

@@ -8,90 +8,88 @@ import { Leaderboard } from "./leaderboard/Leaderboard";
 import { Settings } from "./settings/Settings";
 import { Analysis } from "@/pages/Analysis";
 import { authAPI } from "@/lib/api";
+import { auth, isConfigured } from "@/lib/firebaseClient";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 
 export const FlexItOutApp = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentView, setCurrentView] = useState("home");
   const [user, setUser] = useState<any>(null);
 
-  const fetchUser = async () => {
-    const token = localStorage.getItem("authToken");
-    const storedUser = localStorage.getItem("currentUser");
-    
-    console.log('FlexItOutApp: Checking authentication state');
-    console.log('FlexItOutApp: Token exists:', !!token);
-    console.log('FlexItOutApp: Stored user exists:', !!storedUser);
-    
-    if (token) {
-      try {
-        // Try to get fresh user data from API
-        console.log('FlexItOutApp: Attempting to fetch user data from API');
-        const userData = await authAPI.getMe();
-        console.log('FlexItOutApp: User data fetched successfully:', userData);
-        setUser(userData);
-        setIsAuthenticated(true);
-        // Update stored user data
-        localStorage.setItem("currentUser", JSON.stringify(userData));
-      } catch (err) {
-        console.error("Error fetching user info:", err);
-        
-        // If API call fails, try to use stored user data
-        if (storedUser) {
-          try {
-            const parsedUser = JSON.parse(storedUser);
-            console.log('FlexItOutApp: Using stored user data:', parsedUser);
-            setUser(parsedUser);
+  useEffect(() => {
+    if (!isConfigured) {
+      // Local/offline mode: check localStorage for authToken
+      const localToken = localStorage.getItem("authToken");
+      if (localToken) {
+        authAPI.getMe()
+          .then((userData) => {
+            setUser(userData);
             setIsAuthenticated(true);
-            // Don't clear the token immediately - it might still be valid
-            // Only clear if we get a specific 401 error
-          } catch (parseErr) {
-            console.error("Error parsing stored user data:", parseErr);
+            localStorage.setItem("currentUser", JSON.stringify(userData));
+          })
+          .catch((err) => {
+            console.error("Local token verification failed:", err);
             setUser(null);
             setIsAuthenticated(false);
             localStorage.removeItem("authToken");
             localStorage.removeItem("currentUser");
-          }
-        } else {
-          // If no stored user data and API fails, we might still have a valid token
-          // but no user data. Let's keep the token and try again later
-          console.log('FlexItOutApp: No stored user data, but keeping token for retry');
-          setUser(null);
-          setIsAuthenticated(false);
-        }
+          });
       }
-    } else if (storedUser) {
-      // If no token but stored user data exists, clear it
-      console.log('FlexItOutApp: No token but stored user exists, clearing stored data');
-      localStorage.removeItem("currentUser");
-      setUser(null);
-      setIsAuthenticated(false);
-    } else {
-      console.log('FlexItOutApp: No token and no stored user data');
-      setUser(null);
-      setIsAuthenticated(false);
+      return;
     }
-  };
+
+    // Firebase mode: subscribe to auth state changes
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log("Firebase Auth State Changed:", !!firebaseUser);
+      if (firebaseUser) {
+        try {
+          const idToken = await firebaseUser.getIdToken();
+          localStorage.setItem("authToken", idToken);
+          
+          const userData = await authAPI.getMe();
+          setUser(userData);
+          setIsAuthenticated(true);
+          localStorage.setItem("currentUser", JSON.stringify(userData));
+        } catch (err) {
+          console.error("Auth change fetch error:", err);
+          const fallbackUser = {
+            name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "User",
+            username: firebaseUser.email?.split("@")[0] || "user",
+            email: firebaseUser.email || ""
+          };
+          setUser(fallbackUser);
+          setIsAuthenticated(true);
+        }
+      } else {
+        setUser(null);
+        setIsAuthenticated(false);
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("currentUser");
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const handleAuthSuccess = () => {
     setIsAuthenticated(true);
     setCurrentView("home");
-    fetchUser();
   };
 
-  const handleLogout = () => {
-    // Clear user data and auth state
+  const handleLogout = async () => {
+    if (isConfigured) {
+      try {
+        await signOut(auth);
+      } catch (err) {
+        console.error("Firebase signOut failed:", err);
+      }
+    }
     setUser(null);
     setIsAuthenticated(false);
     localStorage.removeItem("authToken");
     localStorage.removeItem("currentUser");
-    
-    // Redirect to home page
     setCurrentView("home");
   };
-
-  useEffect(() => {
-    fetchUser();
-  }, []);
 
   const handleGetStarted = () => {
     setCurrentView("auth");

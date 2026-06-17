@@ -41,10 +41,6 @@ export const Settings = ({ user, onLogout }: SettingsProps) => {
   };
 
   const handleLogout = () => {
-    // Clear auth token from localStorage
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('currentUser');
-    
     // Show logout confirmation
     toast({
       title: "Logged out successfully! 👋",

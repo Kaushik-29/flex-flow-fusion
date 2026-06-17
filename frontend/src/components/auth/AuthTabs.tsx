@@ -6,6 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dumbbell } from "lucide-react";
 import { authAPI } from "@/lib/api";
+import { auth, isConfigured } from "@/lib/firebaseClient";
+import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { useToast } from "@/hooks/use-toast";
 
 interface AuthTabsProps {
@@ -24,10 +26,33 @@ export const AuthTabs = ({ onAuthSuccess }: AuthTabsProps) => {
     const username = (document.getElementById("login-username") as HTMLInputElement).value;
     const password = (document.getElementById("login-password") as HTMLInputElement).value;
     try {
-      const data = await authAPI.login(username, password);
-      localStorage.setItem("authToken", data.access_token);
+      let email = username;
       
-      // Get user info and store it
+      // If the login is a username rather than an email, resolve it to an email using backend helper
+      if (!username.includes("@")) {
+        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/auth/resolve-email?username=${encodeURIComponent(username)}`);
+        if (!res.ok) {
+          throw new Error("Username not found");
+        }
+        const resData = await res.json();
+        email = resData.email;
+      }
+
+      if (isConfigured) {
+        // Sign in with Firebase Client SDK
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const idToken = await userCredential.user.getIdToken();
+        localStorage.setItem("authToken", idToken);
+      } else {
+        // Mock / offline fallback: call backend login API directly
+        const data = await authAPI.login(username, password);
+        if (data.detail || !data.access_token) {
+          throw new Error(data.detail || "Invalid credentials");
+        }
+        localStorage.setItem("authToken", data.access_token);
+      }
+      
+      // Fetch user profile info
       const userInfo = await authAPI.getMe();
       localStorage.setItem("currentUser", JSON.stringify(userInfo));
       
@@ -65,14 +90,25 @@ export const AuthTabs = ({ onAuthSuccess }: AuthTabsProps) => {
     }
     
     try {
-      // Register the user
-      await authAPI.register({ name, username, email, password });
+      // Register via our Backend endpoint (creates user in Auth and profile in DB)
+      const regRes = await authAPI.register({ name, username, email, password });
+      if (regRes.detail || regRes.error) {
+        throw new Error(regRes.detail || regRes.error || "Registration failed");
+      }
       
-      // Automatically log in the user after successful registration
-      const loginData = await authAPI.login(username, password);
-      localStorage.setItem("authToken", loginData.access_token);
+      // Automatically log in after registration
+      if (isConfigured) {
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const idToken = await userCredential.user.getIdToken();
+        localStorage.setItem("authToken", idToken);
+      } else {
+        const data = await authAPI.login(username, password);
+        if (data.detail || !data.access_token) {
+          throw new Error(data.detail || "Login failed after registration");
+        }
+        localStorage.setItem("authToken", data.access_token);
+      }
       
-      // Get user info and store it
       const userInfo = await authAPI.getMe();
       localStorage.setItem("currentUser", JSON.stringify(userInfo));
       
@@ -88,6 +124,45 @@ export const AuthTabs = ({ onAuthSuccess }: AuthTabsProps) => {
       toast({
         title: "Registration Failed",
         description: err.message || "Please try again",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      if (isConfigured) {
+        const provider = new GoogleAuthProvider();
+        const result = await signInWithPopup(auth, provider);
+        const idToken = await result.user.getIdToken();
+        localStorage.setItem("authToken", idToken);
+        
+        // Fetch user profile info (which also handles backend fallback profile creation on /me)
+        const userInfo = await authAPI.getMe();
+        localStorage.setItem("currentUser", JSON.stringify(userInfo));
+        
+        setIsLoading(false);
+        toast({
+          title: "Welcome back!",
+          description: "Successfully logged in with Google",
+        });
+        onAuthSuccess();
+      } else {
+        toast({
+          title: "Google Sign-In",
+          description: "Firebase is not configured. Google Sign-In is unavailable offline.",
+          variant: "destructive"
+        });
+        setIsLoading(false);
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      setError(err.message || "Google Login failed");
+      toast({
+        title: "Login Failed",
+        description: err.message || "Failed to authenticate with Google",
         variant: "destructive"
       });
     }
@@ -123,10 +198,10 @@ export const AuthTabs = ({ onAuthSuccess }: AuthTabsProps) => {
               <TabsContent value="login" className="space-y-4 mt-6">
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="login-username">Username</Label>
+                    <Label htmlFor="login-username">Username or Email</Label>
                     <Input
                       id="login-username"
-                      placeholder="Enter your username"
+                      placeholder="Enter your username or email"
                       className="bg-input/50 border-border/50 focus:border-primary"
                       required
                     />
@@ -155,7 +230,9 @@ export const AuthTabs = ({ onAuthSuccess }: AuthTabsProps) => {
                     type="button"
                     variant="outline"
                     size="lg"
-                    className="w-full"
+                    className="w-full text-foreground hover:bg-muted"
+                    onClick={handleGoogleLogin}
+                    disabled={isLoading}
                   >
                     Continue with Google
                   </Button>

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 from app.models import Keypoint, PoseFeedbackRequest, PoseFeedbackResponse, Session
-from app.db import get_database
+from app.db import session_repository
 from typing import List
 import math
 from datetime import datetime
@@ -192,6 +192,7 @@ async def pose_feedback_json(request: Request):
         feedback=feedback,
         keypoints=keypoints
     )
-    db = get_database()
-    db["sessions"].insert_one(session.dict())
+    session_dict = session.dict()
+    session_dict["timestamp"] = session_dict["timestamp"].isoformat()
+    session_repository.create(session_dict)
     return {"feedback": feedback}
