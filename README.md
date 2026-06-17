@@ -1,8 +1,8 @@
 # FLEX-IT-OUT 🏋️‍♂️💪
 
-FLEX-IT-OUT is a premium, state-of-the-art, AI-powered fitness companion that helps users track their workouts, receive real-time posture analysis, earn points, and compete with friends. 
+FLEX-IT-OUT is an AI-powered fitness companion that tracks workouts, evaluates exercise form in real time using computer vision, and lets users earn points and compete with friends on a leaderboard.
 
-The application utilizes **browser-based computer vision** for real-time posture evaluation and features a fully refactored, robust, and highly scalable server architecture backed by **Google Firebase**.
+Posture analysis runs entirely **in the browser** via TensorFlow.js, and the backend is built on a lightweight FastAPI service backed by **Google Firebase** (Firestore + Auth).
 
 ---
 
@@ -10,43 +10,52 @@ The application utilizes **browser-based computer vision** for real-time posture
 
 ```mermaid
 graph TD
-    subgraph Client Layer (Netlify)
+    subgraph Client["Client Layer (Netlify)"]
         A[React + TS Frontend] -->|Firebase JS SDK| B[Firebase Auth]
         A -->|Computer Vision| C[TensorFlow.js Pose Detection]
     end
-    
-    subgraph Server Layer (Render)
+
+    subgraph Server["Server Layer (Render)"]
         D[FastAPI Backend] -->|Firebase Admin SDK| E[Cloud Firestore]
-        A -->|Firebase ID Token| D
     end
+
+    A -->|Firebase ID Token| D
 ```
 
-### 1. Database & Session Management
-All persistent storage—including users, workouts, friend requests, notifications, points, and gamification metrics—is hosted on **Cloud Firestore**. 
-* **Offline Fallback**: To support seamless local development and offline testing, the database repositories implement an in-memory dictionary-backed fallback (`_OFFLINE_DB`). If Firebase service keys are not present, the backend automatically operates offline, allowing full functionality.
+**Read paths** (leaderboard updates, friend activity, notifications) are designed to use Firestore's native real-time listeners (`onSnapshot`) directly from the client where possible, rather than polling the backend.
 
-### 2. Unified Authentication
-* Handled natively by **Firebase Authentication** supporting both email/password credentials and single-click **Google Sign-In**.
-* Backend endpoints are secured using a custom FastAPI dependency that decodes and validates Firebase ID tokens via the Firebase Admin SDK.
+**Write paths** that affect points, workout completion, and gamification state are routed through the FastAPI backend, which validates the caller's Firebase ID token via the Admin SDK before writing to Firestore. Keeping these writes server-side (rather than direct client writes governed only by Firestore security rules) makes it easier to enforce rate limits and sanity checks on submitted workout data.
+
+### Database & Session Management
+All persistent storage — users, workouts, friend requests, notifications, points, and gamification metrics — lives in **Cloud Firestore**.
+
+* **Offline fallback for local development**: if Firebase service credentials are not present, the backend falls back to an in-memory dictionary store (`_OFFLINE_DB`) so the app remains fully testable without a live Firebase project.
+* ⚠️ This fallback is intended for local development only. In any deployed environment, missing credentials should fail startup loudly rather than silently serving from memory — see [Known Limitations](#-known-limitations--roadmap).
+
+### Authentication
+* Handled by **Firebase Authentication**, supporting email/password and Google Sign-In.
+* Backend routes are protected by a FastAPI dependency that decodes and verifies Firebase ID tokens via the Firebase Admin SDK.
 
 ---
 
 ## ✨ Features
 
-* **Real-time Posture Analysis**: Computer vision evaluates key exercises (squats, pushups, lunges, jacks, planks, climbers, burpees) and provides instant audio-visual guidance.
-* **Gamification & Points**: Earn points dynamically based on workout completion. Repetition cycles are calculated automatically.
-* **Social Network**: Add friends, track friend requests, and compare daily/weekly scores on the leaderboard.
-* **Global Leaderboard**: Standings based on total accumulated points.
-* **Real-time Notifications**: Alert systems for friend activities, achievements, and workout reminders.
+* **Real-time posture analysis** — computer vision evaluates squats, pushups, lunges, jumping jacks, planks, mountain climbers, and burpees, with instant audio-visual feedback.
+* **Gamification & points** — points are awarded based on completed workouts, with rep cycles calculated automatically from pose data.
+* **Social graph** — send and accept friend requests, and compare scores with friends.
+* **Global leaderboard** — rankings based on total accumulated points.
+* **Notifications** — alerts for friend activity, achievements, and workout reminders.
 
 ---
 
 ## 🛠️ Technology Stack
 
-* **Frontend**: React, TypeScript, Vite, TailwindCSS, Radix UI (Shadcn), Lucide React.
-* **Backend**: Python 3.11+, FastAPI, Uvicorn, PyJWT (for offline testing).
-* **Database & Auth**: Google Firebase (Firestore Database, Firebase Auth, Google OAuth).
-* **AI Model**: TensorFlow.js Pose-Detection (MoveNet/Blazepose).
+| Layer | Technologies |
+|---|---|
+| Frontend | React, TypeScript, Vite, TailwindCSS, Radix UI (Shadcn), Lucide React |
+| Backend | Python 3.11+, FastAPI, Uvicorn, PyJWT (offline/local auth testing) |
+| Database & Auth | Google Firebase — Firestore, Firebase Auth, Google OAuth |
+| AI Model | TensorFlow.js Pose Detection (MoveNet / BlazePose), running client-side |
 
 ---
 
@@ -55,28 +64,28 @@ All persistent storage—including users, workouts, friend requests, notificatio
 ```
 ├── backend/
 │   ├── app/
-│   │   ├── auth.py              # User authentication & friendship routes
-│   │   ├── db.py                # Firebase Admin connection & repository layers
-│   │   ├── main.py              # Backend router mounting & server config
-│   │   ├── models.py            # Pydantic schemas
-│   │   ├── points.py            # Point calculations & gamification
-│   │   └── workout.py           # Workout sessions & history
-│   ├── main.py                  # ASGI Render entrypoint
-│   ├── requirements.txt         # Server dependencies
-│   └── test_user_data.py        # Integration test scripts
+│   │   ├── auth.py              # Authentication & friendship routes
+│   │   ├── db.py                # Firebase Admin connection & repository layer
+│   │   ├── main.py               # Router mounting & server config
+│   │   ├── models.py             # Pydantic schemas
+│   │   ├── points.py             # Point calculation & gamification logic
+│   │   └── workout.py            # Workout sessions & history
+│   ├── main.py                   # ASGI entrypoint (Render)
+│   ├── requirements.txt
+│   └── test_user_data.py         # Integration tests
 └── frontend/
     ├── src/
     │   ├── components/
-    │   │   ├── auth/            # AuthTabs.tsx (Firebase client logins)
-    │   │   ├── dashboard/       # Workout dashboard
-    │   │   ├── settings/        # Settings.tsx (User profile & sign-out)
-    │   │   └── workout/         # Pose detection webcam interface
+    │   │   ├── auth/              # AuthTabs.tsx — Firebase client login flows
+    │   │   ├── dashboard/         # Workout dashboard
+    │   │   ├── settings/          # Settings.tsx — profile & sign-out
+    │   │   └── workout/           # Webcam-based pose detection interface
     │   ├── lib/
-    │   │   ├── api.ts           # Dynamic API token propagation
-    │   │   └── firebaseClient.ts# Firebase web client initialization
+    │   │   ├── api.ts             # API client & token propagation
+    │   │   └── firebaseClient.ts  # Firebase web SDK initialization
     │   └── App.tsx
-    ├── package.json             # Web dependencies
-    └── vite.config.ts           # Bundler settings
+    ├── package.json
+    └── vite.config.ts
 ```
 
 ---
@@ -87,87 +96,95 @@ All persistent storage—including users, workouts, friend requests, notificatio
 * Python 3.11+
 * Node.js 18+
 
-### 1. Setup Backend
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-2. Create and activate a virtual environment:
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate      # On Windows
-   source venv/bin/activate    # On macOS/Linux
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Create a `.env` file in the `backend/` directory:
-   ```env
-   JWT_SECRET=your-local-jwt-secret-key
-   FIREBASE_SERVICE_ACCOUNT_KEY=firebase-key.json
-   FIREBASE_API_KEY=your_firebase_web_api_key
-   ```
-5. *(Optional)* Download your Firebase Private Key JSON from Project Settings > Service Accounts and save it as `backend/firebase-key.json`. If skipped, the server automatically starts in offline fallback mode.
+### 1. Backend
 
-### 2. Setup Frontend
-1. Navigate to the frontend directory:
-   ```bash
-   cd ../frontend
-   ```
-2. Install npm packages:
-   ```bash
-   npm install
-   ```
-3. Create a `.env` file in the `frontend/` directory:
-   ```env
-   VITE_FIREBASE_API_KEY=your_firebase_web_api_key
-   VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-   VITE_FIREBASE_PROJECT_ID=your_project_id
-   VITE_FIREBASE_STORAGE_BUCKET=your_project.firebasestorage.app
-   VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-   VITE_FIREBASE_APP_ID=your_app_id
-   VITE_API_URL=http://localhost:8000
-   ```
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate      # macOS/Linux
+venv\Scripts\activate         # Windows
+pip install -r requirements.txt
+```
+
+Create `backend/.env`:
+
+```env
+JWT_SECRET=your-local-jwt-secret-key
+FIREBASE_SERVICE_ACCOUNT_KEY=firebase-key.json
+FIREBASE_API_KEY=your_firebase_web_api_key
+```
+
+Optionally, download your Firebase service account key (Project Settings → Service Accounts) and save it as `backend/firebase-key.json`. If omitted, the backend starts in offline fallback mode automatically.
+
+### 2. Frontend
+
+```bash
+cd frontend
+npm install
+```
+
+Create `frontend/.env`:
+
+```env
+VITE_FIREBASE_API_KEY=your_firebase_web_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+VITE_API_URL=http://localhost:8000
+```
 
 ---
 
-## 🏃 Running the Application Locally
+## 🏃 Running Locally
 
-1. **Start Backend**:
-   ```bash
-   cd backend
-   uvicorn app.main:app --reload
-   ```
-   The backend will be running at [http://localhost:8000](http://localhost:8000).
+**Backend** — runs at [http://localhost:8000](http://localhost:8000):
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
 
-2. **Start Frontend**:
-   ```bash
-   cd frontend
-   npm run dev
-   ```
-   The web portal will be accessible at [http://localhost:8080](http://localhost:8080).
+**Frontend** — runs at [http://localhost:8080](http://localhost:8080):
+```bash
+cd frontend
+npm run dev
+```
 
-3. **Verify API Integrity**:
-   Run the test suite to ensure endpoints, authentication fallbacks, and database connections work correctly:
-   ```bash
-   cd backend
-   python test_user_data.py
-   python test_all_endpoints.py
-   ```
+**Tests**:
+```bash
+cd backend
+python test_user_data.py
+python test_all_endpoints.py
+```
 
 ---
 
-## 🌐 Production Deployment Configurations
+## 🌐 Deployment
 
-### 1. Backend (Render Deployment)
-* **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-* **Environment Variables**:
-  * `FIREBASE_API_KEY`: Your Firebase Web API Key.
-  * `FIREBASE_SERVICE_ACCOUNT_JSON`: Copy and paste the entire text contents of your `firebase-key.json` file as a single string. (Our system will parse this JSON string dynamically at startup).
+### Backend (Render)
+* **Start command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+* **Environment variables**:
+  * `FIREBASE_API_KEY` — Firebase Web API key.
+  * `FIREBASE_SERVICE_ACCOUNT_JSON` — full contents of `firebase-key.json`, pasted as a single string and parsed at startup. *(Consider migrating to a Render Secret File to avoid JSON-escaping issues in the env var UI.)*
 
-### 2. Frontend (Netlify Deployment)
-* **Build Command**: `npm run build`
-* **Publish Directory**: `dist`
-* **Environment Variables**: Make sure to add the keys (starting with `VITE_`) from your frontend `.env` to Netlify **Site Settings > Environment Variables**, choosing **Same value for all deploy contexts**, and then trigger a redeploy.
-* **Authorized Domain**: Add your `xxxx.netlify.app` domain inside your **Firebase Console > Authentication > Settings > Authorized Domains** so Google Sign-In popups are allowed.
+### Frontend (Netlify)
+* **Build command**: `npm run build`
+* **Publish directory**: `dist`
+* **Environment variables**: add all `VITE_*` keys under Site Settings → Environment Variables (Same value for all deploy contexts), then trigger a redeploy.
+* **Authorized domain**: add your `*.netlify.app` domain under Firebase Console → Authentication → Settings → Authorized Domains so Google Sign-In popups work.
+
+---
+
+## ⚠️ Known Limitations & Roadmap
+
+* **Workout integrity**: rep counts currently originate from client-side pose detection and are trusted by the points API. Planned mitigation: server-side rate limiting and bounds-checking on submitted workout data to deter spoofed completions.
+* **Production fallback safety**: offline mode should be restricted to local/dev environments; production deploys with missing Firebase credentials should fail startup rather than silently running on in-memory storage.
+* **Leaderboard scaling**: current leaderboard queries run directly against the users collection. A denormalized `leaderboards` collection (updated via Firestore triggers) is planned for better performance at scale.
+* **Async/Firestore calls**: auditing backend routes to ensure synchronous Firebase Admin SDK calls don't block the FastAPI event loop under concurrent load.
+
+---
+
+## 📄 License
+
+Add your license of choice here (e.g. MIT).
